@@ -20,7 +20,7 @@
     <uses-feature android:name="android.hardware.wifi.direct" android:required="false"/>
     <uses-feature android:name="android.hardware.bluetooth" android:required="false"/>
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false"/>
-    <application android:name=".LabApplication" android:label="HiCar 实验室" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:supportsRtl="true">
+    <application android:name=".LabApplication" android:label="HiCar 实验室" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:supportsRtl="true">
         <service android:name=".ReceiverService" android:exported="false" android:foregroundServiceType="connectedDevice|microphone"/>
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>

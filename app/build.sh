@@ -13,7 +13,7 @@ for abi in armeabi-v7a arm64-v8a; do
     fi
 done
 mkdir -p build/classes build/dex
-"$bt/aapt2" link -I "$platform" --manifest AndroidManifest.xml -A assets -o build/base.apk
+"$bt/aapt" package -f -M AndroidManifest.xml -I "$platform" -S res -A assets -F build/base.apk
 "$JAVA_HOME/bin/javac" -encoding UTF-8 -source 8 -target 8 -bootclasspath "$platform:$bt/core-lambda-stubs.jar" -d build/classes src/local/hicarlab/*.java
 rm -f build/classes.jar
 (cd build/classes && zip -q -r ../classes.jar .)

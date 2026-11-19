@@ -50,18 +50,36 @@ final class P2pHotspot implements AutoCloseable {
             if(!group.isGroupOwner()){events.failed("未成为本轮热点所有者");return;}
             try{
                 String bssid=null;
-                if(Build.VERSION.SDK_INT>=36){
-                    try{Object address=group.getClass().getMethod("getGroupOwnerBssid").invoke(group);if(address!=null)bssid=address.toString();}
-                    catch(ReflectiveOperationException | RuntimeException ignored){}
+                // GO 设备地址(group owner deviceAddress)就是 P2P 组的 BSSID，公开 API，最可靠。
+                try{
+                    android.net.wifi.p2p.WifiP2pDevice go=group.getOwner();
+                    if(go!=null&&go.deviceAddress!=null){bssid=go.deviceAddress;events.log("[BSSID诊断] getOwner().deviceAddress="+bssid);}
+                }catch(Throwable t){events.log("[BSSID诊断] getOwner不可用:"+t.getClass().getSimpleName());}
+                if(!usableMac(bssid)&&Build.VERSION.SDK_INT>=34){
+                    try{Object address=group.getClass().getMethod("getGroupOwnerBssid").invoke(group);events.log("[BSSID诊断] getGroupOwnerBssid="+address);if(address!=null)bssid=address.toString();}
+                    catch(Throwable t){events.log("[BSSID诊断] getGroupOwnerBssid不可用:"+t.getClass().getSimpleName());}
                 }
+                events.log("[BSSID诊断] groupInterface="+group.getInterface()+" networkName="+group.getNetworkName());
                 String owner=null;NetworkInterface network=NetworkInterface.getByName(group.getInterface());
                 if(network!=null)for(InterfaceAddress a:network.getInterfaceAddresses())if(a.getAddress() instanceof Inet4Address&&!a.getAddress().isLoopbackAddress()&&a.getNetworkPrefixLength()==24)owner=a.getAddress().getHostAddress();
                 if(owner==null){if(++attempts<30){handler.postDelayed(this::poll,500);return;}events.failed("未取得本轮热点真实 IPv4 地址");return;}
                 if(!usableMac(bssid))bssid=OwnGroupAddress.read(network,group.getInterface(),events);
+                // 接口名可能对不上(group.getInterface() 与 java.net 视图不一致)，改用 IP 反查拥有 owner 地址的接口 MAC。
+                if(!usableMac(bssid)){
+                    try{
+                        Enumeration<NetworkInterface> all=NetworkInterface.getNetworkInterfaces();
+                        while(all.hasMoreElements()){
+                            NetworkInterface ni=all.nextElement();
+                            boolean hit=false;
+                            for(InterfaceAddress a:ni.getInterfaceAddresses())if(a.getAddress() instanceof Inet4Address&&owner.equals(a.getAddress().getHostAddress()))hit=true;
+                            if(hit){byte[] hw=ni.getHardwareAddress();if(hw!=null&&hw.length==6){StringBuilder sb=new StringBuilder();for(byte x:hw){if(sb.length()>0)sb.append(':');sb.append(String.format("%02x",x&255));}bssid=sb.toString();events.log("[BSSID诊断] IP反查接口 "+ni.getName()+" MAC="+bssid);}break;}
+                        }
+                    }catch(Throwable t){events.log("[BSSID诊断] IP反查失败:"+t.getClass().getSimpleName());}
+                }
                 if(!usableMac(bssid)){events.failed("系统未向普通应用提供本轮热点 BSSID；未发送占位地址");return;}
                 int dot=owner.lastIndexOf('.');String client=owner.substring(0,dot+1)+(owner.endsWith(".2")?"3":"2");
                 NetworkResource.Offer offer=new NetworkResource.Offer(group.getNetworkName(),bssid,group.getPassphrase(),owner,client,group.getFrequency(),4005);
-                events.log("临时热点已就绪：频率 "+group.getFrequency()+" MHz，真实 BSSID 与 IPv4 已取得（值不写日志）。");
+                events.log("临时热点已就绪：频率 "+group.getFrequency()+" MHz，IPv4 已取得（BSSID/密码值不写日志）。");
                 events.ready(offer);
             }catch(Exception e){events.failed("热点参数核验失败："+e.getClass().getSimpleName());}
         });

@@ -21,6 +21,7 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
     private java.lang.ref.WeakReference<TextureView> owner=new java.lang.ref.WeakReference<>(null);
     private volatile boolean visible;
     private long received,dropped;
+    private long fpsWindowStart,fpsWindowFrames,fpsWindowDrops,fpsWindowLarge,fpsWindowPtsFirst,fpsWindowPtsLast;
     private volatile long rendered;
     private volatile int generation;
     private static final class Frame {byte[] data;long pts;Frame(byte[] d,long t){data=d;pts=t;}}
@@ -33,7 +34,7 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
         if(surface!=null&&surface.isValid()){startDecoder();return ready;}
         close();
         // Detached SurfaceTexture requires no Activity or current GL context.
-        texture=new SurfaceTexture(false);texture.setDefaultBufferSize(800,480);
+        texture=new SurfaceTexture(false);texture.setDefaultBufferSize(VideoProfile.width(),VideoProfile.height());
         surface=new Surface(texture);visible=false;startDecoder();
         if(!ready)close();
         return ready;
@@ -45,7 +46,7 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
             if(!ready)startDecoder();
             DiagnosticLog.add(context,"接收窗口已重新附着；沿用当前视频会话，等待新画面。");return;
         }
-        close();texture=available;texture.setDefaultBufferSize(800,480);surface=new Surface(texture);
+        close();texture=available;texture.setDefaultBufferSize(VideoProfile.width(),VideoProfile.height());surface=new Surface(texture);
         owner=new java.lang.ref.WeakReference<>(view);visible=true;startDecoder();
     }
     synchronized boolean detach(TextureView view,SurfaceTexture value){
@@ -60,11 +61,11 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
         releaseDecoder();
         try{
             codec=MediaCodec.createDecoderByType("video/avc");
-            MediaFormat format=MediaFormat.createVideoFormat("video/avc",800,480);
+            MediaFormat format=MediaFormat.createVideoFormat("video/avc",VideoProfile.width(),VideoProfile.height());
             format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE,HiSightMedia.LIMIT);
             format.setInteger("low-latency",1);
             codec.configure(format,surface,null,0);codec.start();running=true;ready=true;
-            received=rendered=dropped=0;
+            received=rendered=dropped=0;fpsWindowStart=fpsWindowFrames=fpsWindowDrops=fpsWindowLarge=fpsWindowPtsFirst=fpsWindowPtsLast=0;
             final MediaCodec prepared=codec;final int token=generation;worker=new Thread(()->decode(prepared,token),"lab-video-decoder");worker.start();
             DiagnosticLog.add(context,"H.264 解码器与视频窗口已就绪；尚未收到或显示手机视频。");
         }catch(IOException|RuntimeException e){ready=false;running=false;if(codec!=null){try{codec.release();}catch(RuntimeException ignored){}codec=null;}DiagnosticLog.add(context,"视频解码器启动失败："+e.getClass().getSimpleName());}
@@ -75,6 +76,16 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
         Frame frame=new Frame(data.clone(),timestamp*1000000L/90000L);
         if(!frames.offer(frame)){Arrays.fill(frame.data,(byte)0);dropped++;}
         received++;
+        long now=System.nanoTime(),pts=timestamp*1000000L/90000L;
+        if(fpsWindowStart==0){fpsWindowStart=now;fpsWindowPtsFirst=pts;fpsWindowPtsLast=pts;}
+        fpsWindowFrames++;
+        if(data.length>1024)fpsWindowLarge++;
+        fpsWindowPtsLast=pts;
+        if(now-fpsWindowStart>=1000000000L){
+            long dropNow=dropped-fpsWindowDrops;
+            DiagnosticLog.add(context,"帧率实测：到达 "+fpsWindowFrames+" 帧/秒，丢弃 "+dropNow+"，有效画面帧(>1KB) "+fpsWindowLarge+"，PTS 跨度 "+(fpsWindowPtsLast-fpsWindowPtsFirst)/1000+" 毫秒。");
+            fpsWindowStart=now;fpsWindowFrames=0;fpsWindowDrops=dropped;fpsWindowLarge=0;fpsWindowPtsFirst=pts;
+        }
         if(received<=3||received%60==0)DiagnosticLog.add(context,"收到 H.264 数据帧 "+received+"，长度 "+data.length+" 字节；尚不能仅据此确认画面。");
     }
     private static boolean onlyConfig(byte[] data){

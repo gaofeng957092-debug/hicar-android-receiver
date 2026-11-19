@@ -1,6 +1,7 @@
 package local.hicarlab;
 import android.app.Application;
 public final class LabApplication extends Application {
+    @Override public void onCreate(){super.onCreate();VideoProfile.load(this);UiScale.load(this);}
     private ReceiverEngine engine;
     private VideoSink video;
     private final InputRouter input=new InputRouter();

@@ -36,7 +36,11 @@ final class NetworkResource {
         }
         String ownerIp(){return owner;}
         String clientIp(){return client;}
-        byte[] credentials() {return (client+"##"+ssid+"\n"+bssid+"\n"+password+"\n"+frequency+"\n1##version:3##"+controlPort+"##2##hicarApIp:"+owner).getBytes(StandardCharsets.US_ASCII);}
+        byte[] credentials() {
+            String c=client+"##"+ssid+"\n"+bssid+"\n"+password+"\n"+frequency+"\n1##version:3##"+controlPort+"##2##hicarApIp:"+owner;
+            android.util.Log.i("HiCarLab","[CRED-DEBUG] "+c.replace("\n","\\n"));
+            return c.getBytes(StandardCharsets.US_ASCII);
+        }
     }
     final Offer offer;
     volatile boolean authenticated,negotiated,credentialsSent;

@@ -8,6 +8,8 @@ import android.widget.*;
 public final class VideoActivity extends ThemeActivity implements TextureView.SurfaceTextureListener {
     private VideoSink sink;
     private InputRouter input;private int pointer=-1;
+    private final android.util.SparseIntArray uibcPointer=new android.util.SparseIntArray();
+    private int nextPointer=0;
     private TextureView surface;private boolean foreground;
     private LinearLayout root,keys;private TextView title;private Button menu,orientation;
     private boolean fullscreen,landscape,detailsExpanded,receiving;
@@ -21,13 +23,13 @@ public final class VideoActivity extends ThemeActivity implements TextureView.Su
         uiHandler.postDelayed(this,700);
     }};
     private void reconnect(){
-        input.cancel();pointer=-1;((LabApplication)getApplication()).engine().stop(true);
+        resetTouches();((LabApplication)getApplication()).engine().stop(true);
         startActivity(new android.content.Intent(this,HomeActivity.class).putExtra("retry",true).addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP));finish();
     }
-    private int dp(int value){return (int)(value*getResources().getDisplayMetrics().density+.5f);}
+    private int dp(int value){return M3.dp(this,value);}
     private Button key(String label,Runnable action){
-        Button b=new Button(this);b.setText(label);b.setTextSize(14);b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(dp(48));
-        b.setOnClickListener(v->{input.cancel();pointer=-1;action.run();});
+        Button b=new Button(this);b.setText(label);b.setMinWidth(0);b.setMinimumWidth(0);M3.button(b,this,M3.TONAL);
+        b.setOnClickListener(v->{resetTouches();action.run();});
         keys.addView(b,new LinearLayout.LayoutParams(0,-2,1));return b;
     }
     @Override public void onCreate(Bundle state){
@@ -37,20 +39,43 @@ public final class VideoActivity extends ThemeActivity implements TextureView.Su
         receiving=((LabApplication)getApplication()).engine().displayStatus().receiving;
         root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(0xff000000);
         title=new TextView(this);title.setText("HiCar  ·  连接码："+getSharedPreferences("identity",0).getString("pin","未就绪"));
-        title.setTextSize(18);title.setTextColor(0xffffffff);title.setPadding(dp(12),dp(10),dp(12),dp(4));root.addView(title);
-        micStatus=new TextView(this);micStatus.setTextSize(13);micStatus.setTextColor(0xffa8caff);micStatus.setPadding(dp(12),0,dp(12),dp(4));root.addView(micStatus);
-        surface=new TextureView(this){@Override protected void onMeasure(int widthSpec,int heightSpec){int w=MeasureSpec.getSize(widthSpec),h=MeasureSpec.getSize(heightSpec);if(w*480L>h*800L)w=h*800/480;else h=w*480/800;setMeasuredDimension(w,h);}};
+        title.setPadding(dp(16),dp(12),dp(16),dp(4));root.addView(title);
+        micStatus=new TextView(this);micStatus.setPadding(dp(16),0,dp(16),dp(4));root.addView(micStatus);
+        surface=new TextureView(this){@Override protected void onMeasure(int widthSpec,int heightSpec){
+            int w=MeasureSpec.getSize(widthSpec),h=MeasureSpec.getSize(heightSpec);
+            int vw=VideoProfile.width(),vh=VideoProfile.height();
+            if(vw>0&&vh>0){if(w*vh>h*vw)w=h*vw/vh;else h=w*vh/vw;}
+            setMeasuredDimension(w,h);
+        }};
         surface.setOnTouchListener((v,event)->touch(v,event));surface.setSurfaceTextureListener(this);
-        FrameLayout area=new FrameLayout(this);area.setBackgroundColor(0xff000000);area.addView(surface,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
-        notice=new LinearLayout(this);notice.setOrientation(LinearLayout.VERTICAL);notice.setGravity(Gravity.CENTER);notice.setPadding(dp(20),dp(20),dp(20),dp(20));notice.setBackgroundColor(0xe6000000);notice.setClickable(true);
-        progress=new TextView(this);progress.setTextSize(22);progress.setTextColor(0xffffffff);progress.setGravity(Gravity.CENTER);notice.addView(progress);
-        explanation=new TextView(this);explanation.setTextSize(15);explanation.setTextColor(0xffdddddd);explanation.setGravity(Gravity.CENTER);explanation.setPadding(0,dp(10),0,dp(10));notice.addView(explanation);
+        final FrameLayout area=new FrameLayout(this);area.setBackgroundColor(0xff000000);area.addView(surface,new FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));
+        notice=new LinearLayout(this);notice.setOrientation(LinearLayout.VERTICAL);notice.setGravity(Gravity.CENTER);notice.setPadding(dp(20),dp(20),dp(20),dp(20));notice.setClickable(true);M3.surfaceShape(this,24);
+        progress=new TextView(this);progress.setGravity(Gravity.CENTER);notice.addView(progress);
+        explanation=new TextView(this);explanation.setGravity(Gravity.CENTER);explanation.setPadding(0,dp(10),0,dp(10));notice.addView(explanation);
         Button retry=new Button(this);retry.setText("重新连接");retry.setOnClickListener(v->reconnect());notice.addView(retry);
         FrameLayout.LayoutParams np=new FrameLayout.LayoutParams(-1,-2,Gravity.CENTER);np.leftMargin=dp(20);np.rightMargin=dp(20);area.addView(notice,np);
-        menu=new Button(this);menu.setText("菜单");menu.setTextSize(14);menu.setMinWidth(0);menu.setMinimumWidth(0);
-        FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(76),dp(48),Gravity.TOP|Gravity.END);mp.topMargin=dp(6);mp.rightMargin=dp(6);area.addView(menu,mp);
-        menu.setOnClickListener(v->showMenu());root.addView(area,new LinearLayout.LayoutParams(-1,0,1));
-        keys=new LinearLayout(this);keys.setBackgroundColor(UiTheme.dark(this)?0xff202733:0xffeeeeee);
+        menu=new Button(this);menu.setText("菜单");menu.setMinWidth(0);menu.setMinimumWidth(0);menu.setAlpha(0.55f);M3.button(menu,this,M3.TONAL);
+        FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(76),dp(48),Gravity.TOP|Gravity.START);mp.topMargin=dp(6);area.addView(menu,mp);
+        menu.post(()->{FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)menu.getLayoutParams();p.leftMargin=Math.max(0,area.getWidth()-menu.getWidth()-dp(6));menu.setLayoutParams(p);});
+        final float[] down=new float[2];final int[] origin=new int[2];final boolean[] dragged={false};
+        menu.setOnTouchListener((v,event)->{
+            FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)menu.getLayoutParams();
+            if(event.getAction()==MotionEvent.ACTION_DOWN){down[0]=event.getRawX();down[1]=event.getRawY();origin[0]=p.leftMargin;origin[1]=p.topMargin;dragged[0]=false;return true;}
+            if(event.getAction()==MotionEvent.ACTION_MOVE){
+                float dx=event.getRawX()-down[0],dy=event.getRawY()-down[1];
+                if(Math.abs(dx)+Math.abs(dy)>8)dragged[0]=true;
+                if(dragged[0]){
+                    p.leftMargin=(int)Math.max(0,Math.min(area.getWidth()-menu.getWidth(),origin[0]+dx));
+                    p.topMargin=(int)Math.max(0,Math.min(area.getHeight()-menu.getHeight(),origin[1]+dy));
+                    menu.setLayoutParams(p);
+                }
+                return true;
+            }
+            if(event.getAction()==MotionEvent.ACTION_UP){if(!dragged[0])showMenu();return true;}
+            return true;
+        });
+        root.addView(area,new LinearLayout.LayoutParams(-1,0,1));
+        keys=new LinearLayout(this);keys.setBackgroundColor(M3.surfaceVariant(this));
         key("返回",()->{if(!input.key(4))Toast.makeText(this,"输入通道尚未就绪",Toast.LENGTH_SHORT).show();});
         key("主页",()->{if(!input.key(3))Toast.makeText(this,"输入通道尚未就绪",Toast.LENGTH_SHORT).show();});
         orientation=key("横屏",()->{landscape=!landscape;applyOrientation();});
@@ -58,10 +83,14 @@ public final class VideoActivity extends ThemeActivity implements TextureView.Su
         key("重连",this::reconnect);
         key("停止",()->{((LabApplication)getApplication()).engine().stop(true);finish();});root.addView(keys);
         root.setOnApplyWindowInsetsListener((v,insets)->{
+            if(fullscreen){v.setPadding(0,0,0,0);return insets;}
             if(android.os.Build.VERSION.SDK_INT>=30){android.graphics.Insets edge=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());v.setPadding(edge.left,edge.top,edge.right,edge.bottom);}
             else v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());
             return insets;
         });
+        M3.text(title,this,M3.SUBTITLE);M3.text(micStatus,this,M3.CAPTION);M3.text(progress,this,M3.TITLE);M3.text(explanation,this,M3.BODY);M3.button(retry,this,M3.TONAL);
+        notice.setBackground(M3.surfaceShape(this,24));
+        menu.bringToFront();
         setContentView(root);applyOrientation();setFullscreen(fullscreen);
     }
     private void applyOrientation(){
@@ -69,7 +98,7 @@ public final class VideoActivity extends ThemeActivity implements TextureView.Su
         setRequestedOrientation(landscape?android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
     }
     private void setFullscreen(boolean enabled){
-        input.cancel();pointer=-1;fullscreen=enabled;
+        resetTouches();fullscreen=enabled;
         updateInfoVisibility();keys.setVisibility(enabled?View.GONE:View.VISIBLE);menu.setVisibility(View.VISIBLE);
         if(android.os.Build.VERSION.SDK_INT>=30){
             WindowInsetsController c=getWindow().getInsetsController();if(c!=null){c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);if(enabled)c.hide(WindowInsets.Type.systemBars());else c.show(WindowInsets.Type.systemBars());}
@@ -82,7 +111,7 @@ public final class VideoActivity extends ThemeActivity implements TextureView.Su
         micStatus.setVisibility(detailsExpanded&&MicrophoneSender.enabled(this)?View.VISIBLE:View.GONE);
     }
     private void showMenu(){
-        input.cancel();pointer=-1;
+        resetTouches();
         PopupMenu popup=new PopupMenu(this,menu);
         popup.getMenu().add(0,1,0,detailsExpanded?"隐藏连接信息":"显示连接信息");
         if(fullscreen)popup.getMenu().add(0,2,1,"退出全屏");
@@ -93,25 +122,56 @@ public final class VideoActivity extends ThemeActivity implements TextureView.Su
         });popup.show();
     }
     @Override public void onBackPressed(){if(fullscreen)setFullscreen(false);else super.onBackPressed();}
-    @Override public void onConfigurationChanged(android.content.res.Configuration value){super.onConfigurationChanged(value);input.cancel();pointer=-1;root.post(()->setFullscreen(fullscreen));}
+    @Override public void onConfigurationChanged(android.content.res.Configuration value){super.onConfigurationChanged(value);resetTouches();root.post(()->setFullscreen(fullscreen));}
     @Override protected void onSaveInstanceState(Bundle state){state.putBoolean("fullscreen",fullscreen);state.putBoolean("landscape",landscape);state.putBoolean("detailsExpanded",detailsExpanded);super.onSaveInstanceState(state);}
+    private int assignPointer(int id){
+        int p=uibcPointer.get(id,-1);
+        if(p<0){p=nextPointer%4;nextPointer++;}
+        uibcPointer.put(id,p);return p;
+    }
+    private void resetTouches(){input.cancelAll();uibcPointer.clear();nextPointer=0;pointer=-1;}
     private boolean touch(View view,MotionEvent event){
         int action=event.getActionMasked();
         if(action==MotionEvent.ACTION_DOWN){
+            resetTouches();
             if(!sink.hasFrame()||!input.ready())return false;
-            int[] pos=InputRouter.map(event.getX(),event.getY(),view.getWidth(),view.getHeight(),false);
-            if(pos==null||!input.touch(0,pos[0],pos[1]))return false;pointer=event.getPointerId(0);return true;
+            int idx=event.getActionIndex();
+            int[] pos=InputRouter.map(event.getX(idx),event.getY(idx),view.getWidth(),view.getHeight(),false);
+            if(pos==null)return false;
+            int p=assignPointer(event.getPointerId(idx));
+            if(!input.touch(0,pos[0],pos[1],p))return false;
+            pointer=event.getPointerId(idx);return true;
         }
-        if(pointer<0)return false;
-        if(action==MotionEvent.ACTION_CANCEL){input.cancel();pointer=-1;return true;}
-        if(action==MotionEvent.ACTION_POINTER_DOWN)return true;
-        if(action==MotionEvent.ACTION_POINTER_UP&&event.getPointerId(event.getActionIndex())!=pointer)return true;
-        int index=event.findPointerIndex(pointer);if(index<0){input.cancel();pointer=-1;return true;}
-        if(action==MotionEvent.ACTION_MOVE||action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_POINTER_UP){
-            int[] pos=InputRouter.map(event.getX(index),event.getY(index),view.getWidth(),view.getHeight(),true);
-            boolean up=action!=MotionEvent.ACTION_MOVE;
-            if(pos!=null)input.touch(up?1:2,pos[0],pos[1]);else input.cancel();
-            if(up){pointer=-1;view.performClick();}return true;
+        if(pointer<0&&uibcPointer.size()==0)return false;
+        if(action==MotionEvent.ACTION_CANCEL){resetTouches();return true;}
+        if(action==MotionEvent.ACTION_POINTER_DOWN){
+            int idx=event.getActionIndex();
+            int[] pos=InputRouter.map(event.getX(idx),event.getY(idx),view.getWidth(),view.getHeight(),false);
+            if(pos!=null){int p=assignPointer(event.getPointerId(idx));input.touch(0,pos[0],pos[1],p);}
+            return true;
+        }
+        if(action==MotionEvent.ACTION_POINTER_UP){
+            int idx=event.getActionIndex();int id=event.getPointerId(idx);
+            int p=uibcPointer.get(id,-1);
+            if(p>=0){int[] pos=InputRouter.map(event.getX(idx),event.getY(idx),view.getWidth(),view.getHeight(),true);
+                if(pos!=null)input.touch(1,pos[0],pos[1],p);else input.cancel(p);
+                uibcPointer.delete(id);if(pointer==id)pointer=-1;}
+            return true;
+        }
+        if(action==MotionEvent.ACTION_MOVE){
+            for(int i=0;i<event.getPointerCount();i++){
+                int id=event.getPointerId(i);int p=uibcPointer.get(id,-1);if(p<0)continue;
+                int[] pos=InputRouter.map(event.getX(i),event.getY(i),view.getWidth(),view.getHeight(),true);
+                if(pos!=null)input.touch(2,pos[0],pos[1],p);else input.cancel(p);
+            }
+            return true;
+        }
+        if(action==MotionEvent.ACTION_UP){
+            int idx=event.getActionIndex();int id=event.getPointerId(idx);
+            int p=uibcPointer.get(id,-1);
+            if(p>=0){int[] pos=InputRouter.map(event.getX(idx),event.getY(idx),view.getWidth(),view.getHeight(),true);
+                if(pos!=null)input.touch(1,pos[0],pos[1],p);else input.cancel(p);}
+            uibcPointer.clear();pointer=-1;view.performClick();return true;
         }
         return true;
     }
@@ -121,9 +181,9 @@ public final class VideoActivity extends ThemeActivity implements TextureView.Su
     }
     public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture value,int width,int height){}
     public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture value){}
-    public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture value){input.cancel();pointer=-1;return sink.detach(surface,value);}
+    public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture value){resetTouches();return sink.detach(surface,value);}
     @Override protected void onResume(){super.onResume();foreground=true;if(surface!=null)sink.show(surface);if(root!=null)root.post(()->setFullscreen(fullscreen));}
-    @Override protected void onPause(){foreground=false;input.cancel();pointer=-1;if(surface!=null)sink.hide(surface);super.onPause();}
+    @Override protected void onPause(){foreground=false;resetTouches();if(surface!=null)sink.hide(surface);super.onPause();}
     @Override protected void onStart(){super.onStart();uiHandler.removeCallbacks(updateStatus);uiHandler.post(updateStatus);}
     @Override protected void onStop(){uiHandler.removeCallbacks(updateStatus);super.onStop();}
     @Override protected void onDestroy(){uiHandler.removeCallbacksAndMessages(null);if(surface!=null)sink.hide(surface);super.onDestroy();}

@@ -8,7 +8,7 @@ import java.util.concurrent.Executor;
 
 /** Experimental SystemApi call with existing Nearby permission, no exemptions. */
 final class LocalApInfo implements AutoCloseable {
-    interface Events {void found(String address,int frequency);void failed(String reason);void log(String text);}
+    interface Events {void found(String address,int frequency);void failed(String reason);void log(String text);void frequency(int frequency);}
     private final Context context; private final Events events;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private WifiManager wifi; private Object callback; private Class<?> callbackClass;
@@ -50,8 +50,19 @@ final class LocalApInfo implements AutoCloseable {
             int frequency=(Integer)info.getClass().getMethod("getFrequency").invoke(info);
             Object mac=info.getClass().getMethod("getBssid").invoke(info);
             if(logged.add("info:"+frequency+":"+(mac!=null)))events.log("本轮热点状态：频率 "+frequency+" MHz，地址字段存在 "+(mac!=null)+"（值不写日志）。");
+            if(mac==null){
+                StringBuilder dump=new StringBuilder();
+                for(Field f:info.getClass().getDeclaredFields()){
+                    try{f.setAccessible(true);Object v=f.get(info);String s=String.valueOf(v);
+                        if(s.matches("(?i).*([0-9a-f]{2}:){5}[0-9a-f]{2}.*"))dump.append(f.getName()).append('=').append(s).append(';');
+                    }catch(Throwable ignore){}
+                }
+                events.log("[SoftApInfo反射MAC] "+(dump.length()==0?"未发现":dump.toString()));
+            }
             if(NetworkResource.frequencyMask(frequency)==0)return;
-            if(mac==null&&configuredAddress==null)return;
+            // 系统 MAC 随机化时 getBssid() 返回 null 且调用方无可信地址：
+            // 只回传确切的频率，让调用方用仅 SSID 凭据继续，而不是静默超时。
+            if(mac==null&&configuredAddress==null){close();events.frequency(frequency);return;}
             String address=mac!=null?mac.toString():configuredAddress;
             if(mac==null)events.log("使用系统启动回调保留的本轮配置地址；实际连接仍待手机验证，运行回调已确认频道。");
             if(mac!=null&&configuredAddress!=null&&!address.equalsIgnoreCase(configuredAddress)){close();events.failed("系统配置地址与运行地址不一致；未发送配置。");return;}

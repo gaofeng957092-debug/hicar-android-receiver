@@ -28,6 +28,26 @@ final class LocalHotspot implements AutoCloseable {
             if(a.getAddress() instanceof Inet4Address&&!a.getAddress().isLoopbackAddress()&&a.getNetworkPrefixLength()==24)result.add(a.getAddress().getHostAddress());
         return result;
     }
+    private String rootBssid(String owner){
+        String script="for d in /sys/class/net/*; do dev=${d##*/}; "
+            +"case $dev in lo|vgate*|wlan0|rmnet*|ccmni*|dummy*) continue;; esac; "
+            +"ip -4 addr show dev $dev 2>/dev/null | grep -q /24 || continue; "
+            +"a=$(cat $d/address 2>/dev/null); case $a in *:*:*) echo $a; break;; esac; done";
+        try{
+            java.lang.Process p=Runtime.getRuntime().exec(new String[]{"/system/bin/su","-c",script});
+            java.io.BufferedReader r=new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream()));
+            String line;String found=null;
+            while((line=r.readLine())!=null){line=line.trim().toUpperCase(Locale.ROOT);
+                if(line.matches("([0-9A-F]{2}:){5}[0-9A-F]{2}"))found=line;}
+            p.waitFor();
+            if(found!=null&&(Integer.parseInt(found.substring(0,2),16)&1)==0
+                    &&!found.equals("00:00:00:00:00:00")&&!found.equals("02:00:00:00:00:00")){
+                events.log("[root BSSID] App 已通过 su 读取到真实 BSSID（值不写日志）。");return found;
+            }
+            events.log("[root BSSID] su 已执行但未取得可用地址。");
+        }catch(Exception e){events.log("[root BSSID] su 执行失败："+e.getClass().getSimpleName()+" "+e.getMessage());}
+        return null;
+    }
     void start(){
         if(Build.VERSION.SDK_INT<33){events.failed("本轮本地热点兼容接口需要 Android 13 以上");return;}
         try{
@@ -58,26 +78,56 @@ final class LocalHotspot implements AutoCloseable {
         try{
             Object config=reservation.getClass().getMethod("getSoftApConfiguration").invoke(reservation);
             Object address=config.getClass().getMethod("getBssid").invoke(config);
+            // getBssid() 在 MAC 随机化的热点上返回 null，但真实地址常藏在 config 的其他字段里。
+            // 反射扫描所有字段，找第一个合法的本地管理 MAC（真机 dumpsys 能看到这类值）。
+            if(address==null||address.toString().equals("02:00:00:00:00:00")){
+                java.lang.reflect.Field[] fs=config.getClass().getDeclaredFields();
+                for(java.lang.reflect.Field f:fs){
+                    try{f.setAccessible(true);Object v=f.get(config);if(v==null)continue;String s=v.toString();
+                        if(s.matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}")&&!s.equals("00:00:00:00:00:00")&&!s.equals("02:00:00:00:00:00")){
+                            int b0=Integer.parseInt(s.substring(0,2),16);if((b0&1)==0){address=s;events.log("[BSSID反射] 字段 "+f.getName()+" 提供地址（值不写日志）。");break;}
+                        }
+                    }catch(Throwable ignored){}
+                }
+            }
             boolean absent = address == null || address.toString().equals("02:00:00:00:00:00");
             String ssid=(String)config.getClass().getMethod("getSsid").invoke(config),password=(String)config.getClass().getMethod("getPassphrase").invoke(config);
+            events.log("[热点凭据核对] reservation读回SSID="+ssid+"，BSSID字段存在="+(address!=null)+"，密码长度="+(password==null?-1:password.length())+"。");
             SparseIntArray channels=(SparseIntArray)config.getClass().getMethod("getChannels").invoke(config);
             if(channels.size()!=1||channels.get(2,0)!=149){events.failed("系统未保留指定的 5 GHz 信道配置");return;}
             Set<String> added=addresses();added.removeAll(oldAddresses);
             if(added.size()!=1){if(++attempts<30){handler.postDelayed(this::inspect,500);return;}events.failed("无法唯一确认本轮热点 IPv4 地址");return;}
             String owner=added.iterator().next();int dot=owner.lastIndexOf('.');String client=owner.substring(0,dot+1)+(owner.endsWith(".2")?"3":"2");
-            if(requestedBssid!=null&&(absent||!requestedBssid.equalsIgnoreCase(address.toString()))){events.failed("系统未保留本轮请求的热点地址；未发送配置。");return;}
-            if(scannedBssid==null){
-                if(watch==null){
-                    watch=new LocalApInfo(context,new LocalApInfo.Events(){
-                        public void found(String bssid,int frequency){if(!closed){scannedBssid=bssid;actualFrequency=frequency;inspect();}}
-                        public void failed(String reason){if(!closed)events.failed(reason);}
-                        public void log(String text){events.log(text);}
-                    },absent?null:address.toString());watch.start();
+            // 部分 OEM(一加 ColorOS)通过所有公开/SystemApi 途径都不返回真实 BSSID。
+            // 此时不死锁等待，直接用仅 SSID 凭据(协议允许)，让手机按 SSID+密码关联热点。
+            if(absent){
+                if(actualFrequency==0){
+                    if(watch==null){
+                        watch=new LocalApInfo(context,new LocalApInfo.Events(){
+                            public void found(String bssid,int frequency){if(!closed){scannedBssid=bssid;actualFrequency=frequency;inspect();}}
+                            public void failed(String reason){if(!closed)events.log("热点状态回调："+reason);}
+                            public void log(String text){events.log(text);}
+                            public void frequency(int frequency){if(!closed){actualFrequency=frequency;inspect();}}
+                        },null);watch.start();
+                    }
+                    return;
                 }
+                String realBssid=rootBssid(owner);
+                NetworkResource.Offer offer;
+                if(realBssid!=null){
+                    offer=new NetworkResource.Offer(ssid,realBssid,password,owner,client,actualFrequency!=0?actualFrequency:5745,4005);
+                    events.log("已将 root 读取的真实 BSSID 填入凭据（地址值不写日志）。");
+                }else{
+                    offer=NetworkResource.Offer.ssidOnly(ssid,password,owner,client,actualFrequency,4005);
+                    events.log("系统未公开真实 BSSID，使用仅 SSID 凭据（手机按名称+密码关联）。");
+                }
+                delivered=true;
+                if(watch!=null){watch.close();watch=null;}
+                events.ready(offer);
                 return;
             }
-            NetworkResource.Offer offer = new NetworkResource.Offer(ssid,absent?scannedBssid:address.toString(),password,owner,client,actualFrequency,4005);
-            events.log("本轮热点配置与实际频道已就绪；无 USB 地址输入，开始蓝牙网络连接验证。");
+            NetworkResource.Offer offer = new NetworkResource.Offer(ssid,address.toString(),password,owner,client,actualFrequency!=0?actualFrequency:5745,4005);
+            events.log("本轮热点配置与实际频道已就绪；开始蓝牙网络连接验证。");
             delivered=true; events.ready(offer);
         }catch(Exception e){events.failed("本地热点参数检查失败："+e.getClass().getSimpleName());}
     }

@@ -64,11 +64,11 @@ public class MainActivity extends ThemeActivity {
         initIdentity();
         BluetoothManager manager = (BluetoothManager)getSystemService(BLUETOOTH_SERVICE);
         adapter = manager == null ? null : manager.getAdapter();
-        ScrollView scroll = new ScrollView(this);
+        ScrollView scroll = new ScrollView(this);scroll.setBackgroundColor(M3.surface(this));
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        int pad = (int)(16 * getResources().getDisplayMetrics().density);
-        root.setPadding(pad, pad, pad, pad);
+        int pad = M3.dp(this,20);
+        root.setPadding(pad, pad, pad, pad);root.setBackgroundColor(M3.surface(this));
         scroll.addView(root);
         TextView title = new TextView(this); title.setText("设置与诊断 · 0.11.1"); title.setTextSize(25); root.addView(title);
         TextView note = new TextView(this);
@@ -125,7 +125,12 @@ public class MainActivity extends ThemeActivity {
         });
         TextView tips = new TextView(this);
         tips.setText("协议移植参考 Aki894/CarLink（MIT），认证后端采用 OpenHarmony DeviceAuth/HUKS。连接码保存在应用私有目录，不写入报告；删除应用数据会更换身份。0.8.1免输码重连已由用户确认；可在本机填写蓝牙地址保存派生身份。第5项创建临时热点并在结束时释放；Android 16 以上实验通过本地热点 SystemApi 状态回调取得地址；普通应用能否调用及兼容性待实测。不调用 GPS 或扫描附近网络。第6项为画面与触控实验；触控已实测；声音已实测；0.8.3连续播放及断线重连已实测；本版锁屏/后台恢复待验证。\n报告仅记录设备参数和协议状态，不保存对端身份、原始认证包、PIN 或密钥。"); root.addView(tips);
-        logText = new TextView(this); logText.setTextIsSelectable(true); logText.setTextSize(14); root.addView(logText);
+        logText = new TextView(this); logText.setTextIsSelectable(true); root.addView(logText);
+        M3.styleTree(root,this);
+        M3.text(title,this,M3.TITLE);M3.text(note,this,M3.BODY);M3.text(deviceText,this,M3.BODY);
+        M3.text(modelLabel,this,M3.LABEL);M3.text(pinText,this,M3.SUBTITLE);pinText.setTextColor(M3.primary(this));
+        M3.text(nativeText,this,M3.BODY);M3.text(tips,this,M3.CAPTION);M3.text(logText,this,M3.BODY);
+        M3.card(logText,this,true);logText.setPadding(M3.dp(this,16),M3.dp(this,16),M3.dp(this,16),M3.dp(this,16));
         setContentView(scroll);
         refresh();
         log("实验状态：VIDEO_INPUT_AUDIO_EXPERIMENTAL");
@@ -149,7 +154,7 @@ public class MainActivity extends ThemeActivity {
                 catch(RuntimeException e){log("请手动打开系统设置中的关于手机/状态信息，查看蓝牙地址。");}
             })
             .setPositiveButton("保存派生身份",null).create();
-        dialog.setOnShowListener(d->dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+        dialog.setOnShowListener(d->{M3.dialog(dialog,this);M3.dialogButton(dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE),this);M3.dialogButton(dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE),this);M3.dialogButton(dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL),this);dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             if(running || engine().isRunning()) { input.setError("请先停止实验"); return; }
             try{
                 String wireId=WireIdentity.derive(model,input.getText().toString());
@@ -159,7 +164,7 @@ public class MainActivity extends ThemeActivity {
                 input.setText(""); dialog.dismiss();
                 log("已保存本机派生身份；未保存地址，未更换 HUKS 种子或连接码。请先重新配对一次，再验证重连。");
             }catch(IllegalArgumentException e){input.setError("请填写系统显示的本机蓝牙地址，不能使用屏蔽地址");}
-        }));
+        });});
         dialog.show();
         dialog.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
     }
@@ -176,8 +181,9 @@ public class MainActivity extends ThemeActivity {
             startActivityForResult(discover, DISCOVER);
     }
     private void button(LinearLayout root, String label, Runnable action) {
-        Button button = new Button(this); button.setText(label);
-        button.setOnClickListener(v -> action.run()); root.addView(button);
+        Button button = new Button(this); button.setText(label);M3.button(button,this,M3.TONAL);
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=M3.dp(this,8);
+        button.setOnClickListener(v -> action.run()); root.addView(button,p);
     }
     private boolean permitted() {
         return Build.VERSION.SDK_INT < 31 || (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED

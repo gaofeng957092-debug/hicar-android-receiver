@@ -68,8 +68,14 @@ final class HiSightWire implements AutoCloseable {
         if(!start.matches("[A-Z_]+ \\S+ RTSP/1\\.0|RTSP/1\\.0 [1-5][0-9]{2}( [ -~]+)?"))throw new IOException("rtsp start");
         Map<String,String> headers=new LinkedHashMap<>();
         for(int i=1;i<rows.length;i++){
-            int p=rows[i].indexOf(':');if(p<1)throw new IOException("rtsp header");String name=rows[i].substring(0,p).toLowerCase(Locale.ROOT);
-            if(!name.matches("[a-z][a-z0-9-]{0,63}")||headers.put(name,rows[i].substring(p+1).trim())!=null||headers.size()>64)throw new IOException("rtsp duplicate header");
+            String row=rows[i];
+            if(row.isEmpty())continue;
+            int p=row.indexOf(':');
+            if(p<1){events.log("[RTSP容错] 跳过无冒号行（第"+i+"行，长度"+row.length()+"）。");continue;}
+            String name=row.substring(0,p).trim().toLowerCase(Locale.ROOT);
+            if(!name.matches("[a-z][a-z0-9-]{0,63}")){events.log("[RTSP容错] 跳过非法header名（第"+i+"行）。");continue;}
+            if(headers.put(name,row.substring(p+1).trim())!=null)events.log("[RTSP容错] 重复header已覆盖："+name);
+            if(headers.size()>64)throw new IOException("rtsp message limit");
         }
         String seq=headers.get("cseq");if(seq==null||!seq.matches("[0-9]{1,9}"))throw new IOException("rtsp sequence");
         String method=start.split(" ",2)[0];if(method.equals("RTSP/1.0"))events.log("HiSight RTSP 响应状态 "+start.split(" ")[1]+"，序号 "+seq+"。");events.log("HiSight RTSP 消息："+method+"，正文 "+body.length()+" 字节。");
@@ -86,7 +92,7 @@ final class HiSightWire implements AutoCloseable {
         }else if(method.equals("GET_PARAMETER")){
             Set<String> requested=new HashSet<>();for(String row:body.split("\r?\n")){String k=row.split(":",2)[0].trim();if(!k.isEmpty())requested.add(k);}
             Map<String,String> caps=new LinkedHashMap<>();caps.put("his_version","1.0");
-            caps.put("his_video_formats","codecs 1;fps 30;gop 30;bitrate 2000000;vbr-min 1000000;vbr-max 3000000;dpi 160;scr-w 800;scr-h 480;width 800;height 480");
+            caps.put("his_video_formats","codecs 1;fps 30;gop 30;bitrate 2000000;vbr-min 1000000;vbr-max 3000000;dpi "+UiScale.dpi()+";scr-w "+VideoProfile.width()+";scr-h "+VideoProfile.height()+";width "+VideoProfile.width()+";height "+VideoProfile.height());
             caps.put("his_device_type","device_type 4;subtype 0;");
             if(inputEnabled)caps.put("his_uibc_capability","input_category_list=GENERIC;generic_cap_list=left_point_down, left_point_up, left_move, left_key_down, left_key_up;");
             StringBuilder answer=new StringBuilder();for(Map.Entry<String,String> c:caps.entrySet())if(requested.contains(c.getKey()))answer.append(c.getKey()).append(": ").append(c.getValue()).append("\r\n");

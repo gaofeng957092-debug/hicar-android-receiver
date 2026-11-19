@@ -45,13 +45,20 @@ final class MicrophoneControl implements ControlSession.TextHandler {
             if(phase==0||!"1".equals(h.get("cryptover"))||!"222".equals(h.get("cryptoswitch"))||!"aes128-ctr".equals(h.get("cryptoalg"))||body.length!=0)throw new IOException("microphone crypto");
             replies.add(response("200 OK",seq,id,"CryptoVer","1"));if(phase==1)phase=2;
         }else if(start.startsWith("SETUP ")){
-            if(phase<2||body.length!=0)throw new IOException("microphone setup order");
+            if(phase<1||body.length!=0)throw new IOException("microphone setup order");
             Matcher transport=Pattern.compile("RTP/AVP/UDP;unicast;client_port=([0-9]{1,5})-(-1|[0-9]{1,5})").matcher(h.getOrDefault("transport",""));
             if(!transport.matches())throw new IOException("microphone transport");
             int port=Integer.parseInt(transport.group(1)),rtcp=Integer.parseInt(transport.group(2));
             if(port<1||port>65535||rtcp==0||rtcp>65535||phase>2&&remote!=port)throw new IOException("microphone endpoint");
-            remote=port;if(phase==2)phase=3;
-            replies.add(response("200 OK",seq,id,"Transport",h.get("transport")+";server_port="+output.port()+"--1"));
+            remote=port;if(phase<3)phase=3;
+            boolean started=false;
+            if(phase==3){
+                try{output.start(remote);phase=4;started=true;}
+                catch(IOException|RuntimeException e){retire();output.log("麦克风未能启动，画面和播放继续。");replies.add(response("503 Service Unavailable",seq,id));return replies;}
+            }
+            List<String> extra=new ArrayList<>(Arrays.asList("Transport",h.get("transport")+";server_port="+output.port()+"--1"));
+            replies.add(response("200 OK",seq,id,extra.toArray(new String[0])));
+            if(started)output.log("麦克风已开始采集；手机后续 PLAY 仅作确认。");
         }else if(start.startsWith("PLAY ")){
             if(phase<3||body.length!=0)throw new IOException("microphone play order");
             if(phase!=4){try{output.start(remote);phase=4;}catch(IOException|RuntimeException e){retire();output.log("麦克风未能启动，画面和播放继续。");replies.add(response("503 Service Unavailable",seq,id));return replies;}}replies.add(response("200 OK",seq,id));
