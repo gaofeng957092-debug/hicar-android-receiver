@@ -5,15 +5,16 @@ import android.content.Context;
 /** Receiver display profile announced to the sender. */
 final class VideoProfile {
     private static final String KEY = "preset";
-    private static final String[] IDS = {"2K", "1080P", "720P", "600P", "480P"};
-    private static final int[][] SIZES = {{3120,1440},{2340,1080},{1560,720},{1300,600},{1040,480}};
-    private static int index = 1;
+    // 比亚迪 DiLink 车机为 16:9 屏（1920×1080 / 1280×720），档位全部按 16:9 适配。
+    private static final String[] IDS = {"1080P", "720P", "480P"};
+    private static final int[][] SIZES = {{1920,1080},{1280,720},{854,480}};
+    private static int index = 0;
 
     private VideoProfile() {}
 
     static void load(Context context) {
         String saved = context.getSharedPreferences("video", 0).getString(KEY, "1080P");
-        index = 1;
+        index = 0;
         for (int i = 0; i < IDS.length; i++) if (IDS[i].equals(saved)) index = i;
     }
 
