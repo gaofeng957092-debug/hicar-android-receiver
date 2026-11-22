@@ -16,7 +16,7 @@ public final class DisplayGateTest {
         ready[0]=true;List<byte[]> result=d.receive(3,0xffffffffL,mask);check(result.size()==1);
         byte[] response=result.get(0);NearbyWire.Cursor c=new NearbyWire.Cursor(response,11);check(c.uint()==102);
         JSONObject service=AuthBusiness.object(new String(response,c.p,response.length-c.p,StandardCharsets.UTF_8));
-        check(service.getInt("serviceType")==8&&service.getString("serviceId").equals("display1")&&service.getJSONObject("properties").getInt("1009")==800&&service.getJSONObject("properties").getInt("1010")==480);
+        check(service.getInt("serviceType")==8&&service.getString("serviceId").equals("display1")&&service.getJSONObject("properties").getInt("1009")==2340&&service.getJSONObject("properties").getInt("1010")==1080);
         check(d.receive(3,0xffffffffL,mask).isEmpty());d.receive(5,0xffffffffL,port);check(endpoint[0]==49000);
         System.out.println("PASS: no display before decoder/window readiness, no media endpoint before announcement, one display declaration, validated endpoint callback; no audio service");
     }

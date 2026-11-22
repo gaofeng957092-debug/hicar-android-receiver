@@ -29,7 +29,7 @@ public final class HiSightTest {
             s.feed(a,a.length);
             byte[] cap=deliver(s,peer,"GET_PARAMETER * RTSP/1.0\r\nCSeq: 2\r\n\r\nhis_video_formats\r\nhis_audio_codecs\r\nhis_uibc_capability\r\nhis_vtp\r\n");
             String answer=new String(peer.decrypt(Arrays.copyOfRange(cap,4,cap.length)),StandardCharsets.US_ASCII);
-            check(answer.contains("width 800;height 480")&&!answer.contains("his_audio_codecs")&&!answer.contains("his_uibc_capability")&&!answer.contains("his_vtp"));
+            check(answer.contains("width 2340;height 1080")&&!answer.contains("his_audio_codecs")&&!answer.contains("his_uibc_capability")&&!answer.contains("his_vtp"));
             byte[] setup=deliver(s,peer,"SET_PARAMETER * RTSP/1.0\r\nCSeq: 3\r\n\r\nhis_presentation_url: rtsp://192.168.49.2/hisight/streamid=0 none\r\nhis_trigger_method: SETUP\r\n");
             check(new String(peer.decrypt(Arrays.copyOfRange(setup,4,setup.length)),StandardCharsets.US_ASCII).startsWith("SETUP rtsp://"));
             deliver(s,peer,"RTSP/1.0 200 OK\r\nCSeq: 3\r\nContent-Length: 60\r\nTransport: RTP/AVP/UDP;unicast;server_port=49000;remotectl_port=49001\r\n");

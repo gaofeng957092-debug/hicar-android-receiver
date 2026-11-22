@@ -20,6 +20,7 @@ public final class ReceiverService extends Service {
         }
         waitingForBoot=false;
         try{
+            VideoProfile.refresh(ReceiverService.this);
             if(!((LabApplication)getApplication()).video().prepareBackground())throw new IllegalStateException("decoder unavailable");
             String model=getSharedPreferences("identity",0).getString("wire_model","00048000");
             DiagnosticLog.add(ReceiverService.this,"开机自动接收开始：仅等待已配对手机，未请求蓝牙可发现弹窗；本轮麦克风保持关闭。");

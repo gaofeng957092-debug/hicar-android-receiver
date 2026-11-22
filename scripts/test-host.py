@@ -35,7 +35,7 @@ tests = [
     ('NetworkTest', [str(root / 'native-auth/network-vectors.txt')]), ('NetworkFrequencyTest', []),
     ('DmsdpTest', [str(root / 'native-auth/dmsdp-vectors.txt')]), ('CipherTest', []),
     ('ControlTest', []), ('DeviceBusinessTest', []), ('DisplayGateTest', []),
-    ('HiSightTest', []), ('HiSightTcpTest', ['--media-idle']), ('UiInputTest', []),
+    ('HiSightTest', []), ('HiSightTcpTest', ['--media-idle']), ('UiInputTest', []), ('VideoProfileTest', []),
     ('AudioTest', []), ('MicrophoneTest', []), ('MicrophoneCapabilityTest', []),
     ('ReceiverStatusTest', []), ('ApScanTest', [])
 ]

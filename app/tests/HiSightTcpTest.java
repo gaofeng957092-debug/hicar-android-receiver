@@ -79,6 +79,17 @@ public final class HiSightTcpTest {
                         check(events.readUnsignedShort()==0);int length=events.readUnsignedShort();check(length>=32&&length<1500);byte[] record=new byte[length-4];events.readFully(record);
                         byte[] plain=crypto.decrypt(record);check(plain[0]==(byte)255&&plain[5]==(byte)255&&(plain[6]&255)==action);
                     }
+                    check(router.touch(0,100,200,0));check(router.touch(0,300,200,1));
+                    check(router.touchFrame(2,new int[]{0,1},new int[]{80,320},new int[]{200,200},0));
+                    check(router.touch(1,320,200,1));check(router.touch(1,80,200,0));
+                    int[] actions={0,0,2,1,1},counts={1,2,2,2,1},indices={0,1,0,1,0};
+                    for(int i=0;i<actions.length;i++){
+                        check(events.readUnsignedShort()==0);int length=events.readUnsignedShort();byte[] record=new byte[length-4];events.readFully(record);
+                        byte[] plain=crypto.decrypt(record);
+                        check(plain.length==15+5*counts[i]&&(plain[6]&255)==actions[i]&&(plain[9]&255)==counts[i]);
+                        check((plain[plain.length-1]&255)==indices[i]&&(plain[10]&255)==0);
+                        if(counts[i]==2)check((plain[15]&255)==1);
+                    }
                 }
             }
         }finally{active.set(false);client.close();if(worker!=null)worker.join(2000);}

@@ -93,7 +93,8 @@ final class HiSightWire implements AutoCloseable {
             Set<String> requested=new HashSet<>();for(String row:body.split("\r?\n")){String k=row.split(":",2)[0].trim();if(!k.isEmpty())requested.add(k);}
             if(requested.contains("his_audio_codecs"))events.log("HiSight 请求音频编码能力；当前音频由 DMSDP 扬声器服务协商。");
             Map<String,String> caps=new LinkedHashMap<>();caps.put("his_version","1.0");
-            caps.put("his_video_formats","codecs 1;fps 30;gop 30;bitrate 2000000;vbr-min 1000000;vbr-max 3000000;dpi "+UiScale.dpi()+";scr-w "+VideoProfile.width()+";scr-h "+VideoProfile.height()+";width "+VideoProfile.width()+";height "+VideoProfile.height());
+            int bitrate=VideoProfile.bitrate();
+            caps.put("his_video_formats","codecs 1;fps 30;gop 30;bitrate "+bitrate+";vbr-min "+bitrate/2+";vbr-max "+Math.min(16000000,bitrate*3/2)+";dpi "+UiScale.dpi()+";scr-w "+VideoProfile.width()+";scr-h "+VideoProfile.height()+";width "+VideoProfile.width()+";height "+VideoProfile.height());
             caps.put("his_device_type","device_type 4;subtype 0;");
             if(inputEnabled)caps.put("his_uibc_capability","input_category_list=GENERIC;generic_cap_list=left_point_down, left_point_up, left_move, left_key_down, left_key_up;");
             StringBuilder answer=new StringBuilder();for(Map.Entry<String,String> c:caps.entrySet())if(requested.contains(c.getKey()))answer.append(c.getKey()).append(": ").append(c.getValue()).append("\r\n");

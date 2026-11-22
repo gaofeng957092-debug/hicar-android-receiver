@@ -110,6 +110,7 @@ final class ReceiverEngine {
                 ? "本轮使用原实验身份；免输码重连尚未修正。"
                 : "本轮使用本机蓝牙地址派生身份；原 HUKS 种子与连接码保持；重连待实测。");
         stopInternal(false,false,false); running = true;
+        if(withVideo)log("本轮画面配置："+VideoProfile.width()+"×"+VideoProfile.height()+"，界面密度 "+UiScale.dpi()+" dpi，目标视频码率 "+VideoProfile.bitrate()+" bit/s。");
         continuous = withVideo;microphoneAllowed=withVideo&&withMicrophone;
         reconnect.reset();
         sequence = context.getSharedPreferences("identity", 0).getInt("discovery_sequence", 0) & 255;

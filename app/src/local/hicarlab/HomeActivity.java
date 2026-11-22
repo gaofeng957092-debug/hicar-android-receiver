@@ -164,6 +164,7 @@ public final class HomeActivity extends ThemeActivity {
     private void continueStart(){
         if(!pending)return;
         if(engine().isActive()){pending=false;openVideo();return;}
+        VideoProfile.refresh(this);resolution.setText("分辨率："+VideoProfile.label());
         List<String> missing=new ArrayList<>();
         if(Build.VERSION.SDK_INT>=31)for(String p:new String[]{Manifest.permission.BLUETOOTH_CONNECT,Manifest.permission.BLUETOOTH_ADVERTISE})if(checkSelfPermission(p)!=PackageManager.PERMISSION_GRANTED)missing.add(p);
         String wifi=Build.VERSION.SDK_INT>=33?"android.permission.NEARBY_WIFI_DEVICES":Manifest.permission.ACCESS_FINE_LOCATION;
