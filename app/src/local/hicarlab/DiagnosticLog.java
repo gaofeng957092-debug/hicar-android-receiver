@@ -11,6 +11,7 @@ final class DiagnosticLog {
     private static final Handler handler = new Handler(Looper.getMainLooper());
     private static StringBuilder history;
     private static Listener listener;
+    private static boolean updateScheduled;
     static synchronized String history(Context c) {
         if(history==null)history=new StringBuilder(c.getSharedPreferences("diagnostics",0).getString("history",""));
         return history.toString();
@@ -23,9 +24,17 @@ final class DiagnosticLog {
             if(history.length()>24000)history.delete(0,history.length()-16000);
             snapshot=history.toString();
             c.getSharedPreferences("diagnostics",0).edit().putString("history",snapshot).apply();
+            if(listener!=null&&!updateScheduled){
+                updateScheduled=true;
+                handler.postDelayed(DiagnosticLog::deliverUpdate,1500);
+            }
         }
         android.util.Log.i("HiCarLab",message);
-        handler.post(()->{ Listener target; synchronized(DiagnosticLog.class){target=listener;} if(target!=null)target.update(snapshot); });
+    }
+    private static void deliverUpdate(){
+        Listener target;String snapshot;
+        synchronized(DiagnosticLog.class){updateScheduled=false;target=listener;snapshot=history.toString();}
+        if(target!=null)target.update(snapshot);
     }
     static void attach(Context c,Listener target) { synchronized(DiagnosticLog.class){listener=target;} target.update(history(c)); }
     static synchronized void detach(Listener target) {if(listener==target)listener=null;}

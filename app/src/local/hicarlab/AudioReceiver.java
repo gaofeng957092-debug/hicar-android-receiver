@@ -7,7 +7,7 @@ import java.util.*;
 /** Authenticated-peer UDP receiver; bounded RTP state, no audio files. */
 final class AudioReceiver implements AutoCloseable,SpeakerControl.Output,DeviceBusiness.Speaker {
     interface Sink extends AutoCloseable {boolean ready();void reset();void offer(AudioMedia.Frame frame);void close();}
-    interface Events {boolean active();void log(String text);}
+    interface Events {boolean active();void log(String text);default void mediaReceived() {}}
     private final DatagramSocket socket;private final String peer;private final Sink sink;private final Events events;
     private final SessionCipher cipher;private final AudioMedia media=new AudioMedia();
     private final Object stateLock=new Object();private volatile int epoch;
@@ -41,7 +41,9 @@ final class AudioReceiver implements AutoCloseable,SpeakerControl.Output,DeviceB
                     plain=AudioMedia.decrypt(Arrays.copyOf(buffer,datagram.getLength()),cipher);
                     synchronized(stateLock){
                         if(!active||epoch!=acceptedEpoch)continue;
-                        for(AudioMedia.Frame frame:media.receive(plain))try{sink.offer(frame);}finally{Arrays.fill(frame.data,(byte)0);}
+                        List<AudioMedia.Frame> frames=media.receive(plain);
+                        events.mediaReceived();
+                        for(AudioMedia.Frame frame:frames)try{sink.offer(frame);}finally{Arrays.fill(frame.data,(byte)0);}
                     }
                     if(received<=3||received%200==0)events.log("音频 UDP：已接收 "+received+" 包，提取 "+media.frames+" 个 AAC 帧，丢包 "+media.lost+"，重复 "+media.duplicates+"。");
                 }catch(IOException|GeneralSecurityException e){if(++rejected<=3)events.log("音频数据包拒绝："+e.getClass().getSimpleName()+"；未记录媒体内容。");}

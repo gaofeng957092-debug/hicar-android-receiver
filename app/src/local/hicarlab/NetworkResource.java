@@ -38,21 +38,87 @@ final class NetworkResource {
         String clientIp(){return client;}
         byte[] credentials() {
             String c=client+"##"+ssid+"\n"+bssid+"\n"+password+"\n"+frequency+"\n1##version:3##"+controlPort+"##2##hicarApIp:"+owner;
-            android.util.Log.i("HiCarLab","[CRED-DEBUG] "+c.replace("\n","\\n"));
             return c.getBytes(StandardCharsets.US_ASCII);
         }
     }
     final Offer offer;
     volatile boolean authenticated,negotiated,credentialsSent;
+    volatile boolean honorProfile;
     int dataPort;
+    String negotiationIssue;
     private final List<byte[]> pending=new ArrayList<>();
     NetworkResource(Offer offer){this.offer=offer;}
-    static Map<Integer,Integer> abilities(byte[] data)throws IOException {
-        if(data.length>256)throw new IOException("capability limit");Map<Integer,Integer> values=new LinkedHashMap<>();NearbyWire.Cursor c=new NearbyWire.Cursor(data,0);
-        try{while(c.p<data.length){int key=c.uint(),value=c.uint();if(values.put(key,value)!=null||values.size()>32)throw new IOException("capability fields");}}
-        catch(NearbyWire.Short e){throw new IOException("capability truncated");}return values;
+    private static long capabilityValue(NearbyWire.Cursor cursor,int key)throws IOException,NearbyWire.Short {
+        long value=0;
+        for(int shift=0;shift<64;shift+=7) {
+            if(cursor.p==cursor.b.length)throw new NearbyWire.Short();
+            int next=cursor.b[cursor.p++]&255;
+            if(shift==63&&(next&254)!=128)break;
+            value|=(long)(next&127)<<shift;
+            if((next&128)!=0)return value;
+        }
+        throw new NearbyWire.Invalid("capability value width, key "+key);
     }
-    private static int cap(Map<Integer,Integer> a,int key){Integer n=a.get(key);return n==null?0:n;}
+    private static final class HonorCapabilities {
+        final int baseLength,channelMask;
+        HonorCapabilities(int baseLength,int channelMask){this.baseLength=baseLength;this.channelMask=channelMask;}
+    }
+    private static HonorCapabilities honorCapabilities(byte[] data) {
+        // Magic7 Pro includes an extended WLAN block and a trailing nine-channel mask.
+        // Check the observed layout before interpreting the final integer as a mask.
+        if(data.length<26||data.length>31)return null;
+        int[] keys={3,1,2,3,4,6,7,9,10,0,0,0};
+        int[] maxWidths={1,1,1,1,1,1,2,1,5,1,1,1};
+        NearbyWire.Cursor cursor=new NearbyWire.Cursor(data,0);
+        int baseLength=0;
+        try {
+            for(int i=0;i<keys.length;i++) {
+                if(keys[i]==10)baseLength=cursor.p;
+                if(cursor.uint()!=keys[i])return null;
+                int start=cursor.p;
+                capabilityValue(cursor,keys[i]);
+                if(cursor.p-start>maxWidths[i])return null;
+            }
+            int mask=cursor.uint();
+            return cursor.p==data.length&&mask>0&&mask<=0x1ff?new HonorCapabilities(baseLength,mask):null;
+        } catch(IOException|NearbyWire.Short e) {
+            return null;
+        }
+    }
+    private static Map<Integer,Long> abilities(byte[] data,HonorCapabilities honor)throws IOException {
+        if(data.length>256)throw new NearbyWire.Invalid("capability limit");
+        if(honor!=null)data=Arrays.copyOf(data,honor.baseLength);
+        Map<Integer,Long> values=new LinkedHashMap<>();
+        NearbyWire.Cursor cursor=new NearbyWire.Cursor(data,0);
+        StringJoiner layout=new StringJoiner(",");
+        int count=0;
+        while(cursor.p<data.length) {
+            int offset=cursor.p;
+            int key;
+            try {
+                key=cursor.uint();
+            } catch(NearbyWire.Invalid|NearbyWire.Short e) {
+                throw new NearbyWire.Invalid("capability key at "+offset+"/"+data.length+"; parsed "+layout);
+            }
+            int valueOffset=cursor.p;
+            long value;
+            try {
+                value=capabilityValue(cursor,key);
+            } catch(NearbyWire.Invalid|NearbyWire.Short e) {
+                throw new NearbyWire.Invalid("capability value for key "+key+" at "+valueOffset+"/"+data.length+"; parsed "+layout);
+            }
+            if(++count>32)throw new NearbyWire.Invalid("capability count");
+            // Record field positions and widths without recording extension values.
+            layout.add(offset+":"+key+"("+ (cursor.p-valueOffset) +")");
+            // Other vendors may repeat extensions that this receiver does not use.
+            if(key!=2&&key!=4&&key!=5)continue;
+            Long previous=values.putIfAbsent(key,value);
+            if(previous!=null&&previous!=value)throw new NearbyWire.Invalid("conflicting capability "+key+"; parsed "+layout);
+        }
+        if(honor!=null)values.put(5,(long)honor.channelMask);
+        return values;
+    }
+    private static long cap(Map<Integer,Long> a,int key){return a.getOrDefault(key,0L);}
     List<byte[]> takePending(){List<byte[]> result=new ArrayList<>(pending);pending.clear();return result;}
     byte[] respond(NearbyWire.Frame frame)throws IOException {
         if(!authenticated||(frame.flags&1)!=0)return null;
@@ -62,34 +128,40 @@ final class NetworkResource {
                 byte[] reply=null;NearbyWire.Cursor c=new NearbyWire.Cursor(f.value,0);
                 if(frame.kind==4&&f.tag==1){
                     int channel=c.uint();List<NearbyWire.Field> detail=NearbyWire.fields(Arrays.copyOfRange(f.value,c.p,f.value.length));
-                    if(channel!=3||detail.size()!=1||detail.get(0).tag!=3)throw new IOException("network negotiation");
-                    Map<Integer,Integer> caps=abilities(detail.get(0).value);
-                    boolean accepted=cap(caps,2)==1&&cap(caps,4)==1&&(cap(caps,5)&frequencyMask(offer.frequency))!=0;
+                    if(channel!=3||detail.size()!=1||detail.get(0).tag!=3)throw new NearbyWire.Invalid("network negotiation");
+                    byte[] fields=detail.get(0).value;
+                    HonorCapabilities honor=honorCapabilities(fields);
+                    Map<Integer,Long> caps=abilities(fields,honor);
+                    boolean clientRole=cap(caps,2)==1&&cap(caps,4)==1;
+                    boolean sharedChannel=(cap(caps,5)&frequencyMask(offer.frequency))!=0;
+                    boolean accepted=clientRole&&sharedChannel;
+                    honorProfile=accepted&&honor!=null;
+                    negotiationIssue=accepted?null:"手机声明加入角色 "+clientRole+"，热点频道匹配 "+sharedChannel;
                     byte[] result=NearbyWire.join(NearbyWire.uint(3),NearbyWire.uint(accepted?1:255));
                     if(accepted)result=NearbyWire.join(result,NearbyWire.tlv(3,NearbyWire.join(new byte[]{1},NearbyWire.uint(offer.frequency))));
                     reply=NearbyWire.tlv(2,result);negotiated=accepted;
                 }else if(frame.kind==4&&f.tag==3){
-                    if(!negotiated||dataPort<1024||dataPort>65535)throw new IOException("data endpoint not ready");
-                    int channel=c.uint(),business=c.uint(),size=c.uint();if(size>128)throw new IOException("data tag limit");c.take(size);int protocol=c.uint();
-                    if(channel!=3||business!=20||protocol!=1||c.p!=f.value.length)throw new IOException("data socket request");
+                    if(!negotiated||dataPort<1024||dataPort>65535)throw new NearbyWire.Invalid("data endpoint not ready");
+                    int channel=c.uint(),business=c.uint(),size=c.uint();if(size>128)throw new NearbyWire.Invalid("data tag limit");c.take(size);int protocol=c.uint();
+                    if(channel!=3||business!=20||protocol!=1||c.p!=f.value.length)throw new NearbyWire.Invalid("data socket request");
                     reply=NearbyWire.tlv(4,NearbyWire.join(NearbyWire.uint(0),NearbyWire.uint(dataPort),f.value));
                 }else if(frame.kind==4&&f.tag==7){
                     int channel=c.uint(),status=c.uint();List<NearbyWire.Field> selected=NearbyWire.fields(Arrays.copyOfRange(f.value,c.p,f.value.length));
-                    if(!negotiated||channel!=3||status!=1||selected.size()!=1||selected.get(0).tag!=3)throw new IOException("network selection");
-                    byte[] role=selected.get(0).value;if(role.length<2||role[0]!=2)throw new IOException("network role");
-                    NearbyWire.Cursor r=new NearbyWire.Cursor(role,1);if(r.uint()!=offer.frequency||r.p!=role.length)throw new IOException("frequency");
-                    if(pending.size()>=4)throw new IOException("network command limit");pending.add(NearbyWire.pack(33,NearbyWire.tlv(1,new byte[0])));
+                    if(!negotiated||channel!=3||status!=1||selected.size()!=1||selected.get(0).tag!=3)throw new NearbyWire.Invalid("network selection");
+                    byte[] role=selected.get(0).value;if(role.length<2||role[0]!=2)throw new NearbyWire.Invalid("network role");
+                    NearbyWire.Cursor r=new NearbyWire.Cursor(role,1);if(r.uint()!=offer.frequency||r.p!=role.length)throw new NearbyWire.Invalid("frequency");
+                    if(pending.size()>=4)throw new NearbyWire.Invalid("network command limit");pending.add(NearbyWire.pack(33,NearbyWire.tlv(1,new byte[0])));
                 }else if(frame.kind==33&&(f.tag==1||f.tag==2||f.tag==4)){
-                    if(!negotiated)throw new IOException("network command order");
+                    if(!negotiated)throw new NearbyWire.Invalid("network command order");
                     if(f.tag==1)reply=NearbyWire.tlv(2,"busy".getBytes(StandardCharsets.US_ASCII));
                     else{
-                        String mac=new String(f.value,StandardCharsets.US_ASCII);if(!mac.matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}"))throw new IOException("client address");
+                        String mac=new String(f.value,StandardCharsets.US_ASCII);if(!mac.matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}"))throw new NearbyWire.Invalid("client address");
                         reply=NearbyWire.tlv(3,offer.credentials());credentialsSent=true;
                     }
                 }else if(frame.kind==33&&f.tag==5)reply=NearbyWire.tlv(6,new byte[0]);
                 if(reply!=null)replies.write(reply,0,reply.length);
             }
-        }catch(NearbyWire.Short e){throw new IOException("network frame truncated");}
+        }catch(NearbyWire.Short e){throw new NearbyWire.Invalid("network frame truncated");}
         return replies.size()==0?null:NearbyWire.pack(frame.kind,replies.toByteArray());
     }
 }

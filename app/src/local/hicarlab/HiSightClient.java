@@ -7,7 +7,7 @@ import java.util.*;
 /** Only connects to endpoints supplied by the already selected authenticated peer. */
 final class HiSightClient implements AutoCloseable {
     interface Video {boolean ready();void offer(int kind,long timestamp,byte[] data)throws IOException;}
-    interface Events {boolean active();void log(String text);void add(Socket s);void remove(Socket s);}
+    interface Events {boolean active();void log(String text);void add(Socket s);void remove(Socket s);default void mediaReceived() {}}
     private final String owner,peer;private final Video sink;private final Events events;
     private final InputRouter router;private InputChannel inputChannel;
     private byte[] key;private volatile boolean closed;private Socket control,media,input;
@@ -51,7 +51,7 @@ final class HiSightClient implements AutoCloseable {
                 byte[] header=new byte[4];readMediaFully(in,header);
                 long length=0;for(byte value:header)length=(length<<8)|(value&255);
                 if(length<1||length>HiSightMedia.LIMIT)throw new IOException("media record size");
-                byte[] packet=new byte[(int)length];readMediaFully(in,packet);decoder.packet(packet,(kind,time,data)->{if(closed||!events.active())throw new IOException("stale video session");sink.offer(kind,time,data);});
+                byte[] packet=new byte[(int)length];readMediaFully(in,packet);decoder.packet(packet,(kind,time,data)->{if(closed||!events.active())throw new IOException("stale video session");sink.offer(kind,time,data);events.mediaReceived();});
             }
         }catch(IOException|GeneralSecurityException|RuntimeException e){if(events.active())events.log("HiSight 视频接收结束："+e.getClass().getSimpleName());}
         finally{Arrays.fill(localKey,(byte)0);close();}

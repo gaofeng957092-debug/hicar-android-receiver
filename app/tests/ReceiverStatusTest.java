@@ -13,6 +13,13 @@ public final class ReceiverStatusTest {
   s.retrying(10);check(s.snapshot(true).problem&&!s.snapshot(true).receiving);s.advance(9,ReceiverStatus.Stage.MEDIA);check(s.snapshot(false).title.equals("正在重新连接"));
   s.begin(11);s.advance(11,ReceiverStatus.Stage.WAITING);check(!s.snapshot(false).problem);
   s.issue(11,"请检查连接码");check(s.snapshot(false).problem);s.advance(11,ReceiverStatus.Stage.NETWORK);check(!s.snapshot(false).problem);
+  long second=1_000_000_000L;
+  check(!ReconnectGate.peerTimedOut(14*second,0,0));
+  check(!ReconnectGate.peerTimedOut(20*second,19*second,0)); // Video paused, heartbeat still arriving.
+  check(!ReconnectGate.peerTimedOut(20*second,0,19*second)); // Media healthy despite idle control.
+  check(ReconnectGate.peerTimedOut(20*second,5*second,3*second));
+  ReconnectGate gate=new ReconnectGate();
+  check(gate.request(11)&&!gate.request(11)&&gate.request(12));
   System.out.println("PASS: no false receiving before decoded media, delayed callback cannot regress stage or revive stopped session, failure/retry visibility and fresh-session recovery");
  }
 }

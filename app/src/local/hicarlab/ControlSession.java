@@ -15,11 +15,13 @@ final class ControlSession implements AutoCloseable {
     private final SessionCipher cipher; private final Events events;
     private byte[] wire=new byte[0],text=new byte[0];
     private boolean negotiated,failed;
+    private boolean peerHeartbeatSeen;
     private int sequence=1;
     ControlSession(byte[] key,Events e){this(key,e,null);}
     ControlSession(byte[] key,Events e,Business b){this(key,e,b,null);}
     ControlSession(byte[] key,Events e,Business b,TextHandler handler){cipher=new SessionCipher(key,1498);events=e;business=b;textHandler=handler;}
     boolean negotiated(){return negotiated;}
+    boolean peerHeartbeatSeen(){return peerHeartbeatSeen;}
     static byte[] pack(byte[] payload,int marker)throws IOException{
         if((marker!=0&&marker!=171)||payload.length<1||payload.length>=1498)throw new IOException("control record");
         return NearbyWire.join(new byte[]{(byte)marker,(byte)(payload.length>>>8),(byte)payload.length},payload);
@@ -85,7 +87,8 @@ final class ControlSession implements AutoCloseable {
             if(size>65536)throw new IOException("body limit");if(text.length<end+4+size)return;
             byte[] body=Arrays.copyOfRange(text,end+4,end+4+size);text=Arrays.copyOfRange(text,end+4+size,text.length);
             // Log protocol method and length only; no header values or body.
-            events.log("DMSDP 控制消息："+start.split(" ",2)[0]+"，正文 "+size+" 字节。");
+            boolean peerHeartbeat=start.equals("GET_PARAMETER * DMSDP/1.0")&&negotiated&&size==0&&headers.size()==1;
+            if(!peerHeartbeat)events.log("DMSDP 控制消息："+start.split(" ",2)[0]+"，正文 "+size+" 字节。");
             if(headers.containsKey("serviceid")&&textHandler!=null){
                 if(!negotiated)throw new IOException("speaker before encryption");
                 List<byte[]> audio;try{audio=textHandler.receive(start,headers,body);}finally{Arrays.fill(body,(byte)0);}
@@ -98,7 +101,7 @@ final class ControlSession implements AutoCloseable {
                 replies.add(pack(encode("DMSDP/1.0 200 OK","CSeq",cseq,"CryptoVer","1","CryptoSwitch","222","CryptoAlg","aes128-ctr","Platform","0"),0));
                 negotiated=true;events.log("DMSDP AES-CTR 控制协商完成；等待设备信息交换；尚未宣布媒体服务。");
             }else if(start.equals("GET_PARAMETER * DMSDP/1.0")&&negotiated&&size==0&&headers.size()==1&&cseq!=null&&cseq.matches("[0-9]{1,9}")){
-                events.log("DMSDP 收到加密心跳。");
+                if(!peerHeartbeatSeen){peerHeartbeatSeen=true;events.log("DMSDP 收到首条加密心跳。");}
             }else if(start.equals("SET_PARAMETER * DMSDP/1.0")&&negotiated&&headers.keySet().containsAll(Arrays.asList("timeserverport","timeushigh","timeuslow"))){
                 if(cseq==null||!cseq.matches("[0-9]{1,9}"))throw new IOException("clock sequence");
                 if(!headers.get("timeserverport").matches("[0-9]{1,5}"))throw new IOException("clock port");

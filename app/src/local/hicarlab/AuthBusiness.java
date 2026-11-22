@@ -92,5 +92,31 @@ final class AuthBusiness implements AutoCloseable {
             try{events.authenticated(key);done=true;}finally{Arrays.fill(key,(byte)0);}events.log("HiChain 后端报告认证成功；等待后续网络及媒体会话，认证成功本身不代表投屏成功。");}
     }
     boolean done(){return done;}
+    static String postAuthMetadata(byte[] bytes,int length) {
+        if(length<2||length>1024)return "长度 "+length;
+        try {
+            JSONObject envelope=object(new String(bytes,0,length,StandardCharsets.UTF_8));
+            StringBuilder summary=new StringBuilder("长度 ").append(length);
+            appendCode(summary,envelope,"oper_type");
+            Object payload=envelope.opt("data");
+            if(payload instanceof String) {
+                String value=((String)payload).trim();
+                if(value.startsWith("{"))payload=object(value);
+                else if(value.matches("-?[0-9]{1,9}"))summary.append("，数值 ").append(value);
+            }
+            if(payload instanceof JSONObject) {
+                JSONObject fields=(JSONObject)payload;
+                for(String name:new String[]{"message","result","status","errorCode","reason"})appendCode(summary,fields,name);
+            }
+            return summary.toString();
+        } catch(JSONException e) {
+            return "长度 "+length+"，未识别为完整 JSON 状态消息";
+        }
+    }
+    private static void appendCode(StringBuilder summary,JSONObject object,String name) {
+        Object value=object.opt(name);
+        if(value instanceof Integer||value instanceof String&&((String)value).matches("-?[0-9]{1,9}"))
+            summary.append("，").append(name).append(' ').append(value);
+    }
     @Override public void close(){if(handle!=0){NativeAuth.close(handle);handle=0;}}
 }

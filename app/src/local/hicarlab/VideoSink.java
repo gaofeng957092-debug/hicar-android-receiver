@@ -22,6 +22,7 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
     private volatile boolean visible;
     private long received,dropped;
     private long fpsWindowStart,fpsWindowFrames,fpsWindowDrops,fpsWindowLarge,fpsWindowPtsFirst,fpsWindowPtsLast;
+    private long lastFpsLog;
     private volatile long rendered;
     private volatile int generation;
     private static final class Frame {byte[] data;long pts;Frame(byte[] d,long t){data=d;pts=t;}}
@@ -65,7 +66,7 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
             format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE,HiSightMedia.LIMIT);
             format.setInteger("low-latency",1);
             codec.configure(format,surface,null,0);codec.start();running=true;ready=true;
-            received=rendered=dropped=0;fpsWindowStart=fpsWindowFrames=fpsWindowDrops=fpsWindowLarge=fpsWindowPtsFirst=fpsWindowPtsLast=0;
+            received=rendered=dropped=0;lastFpsLog=fpsWindowStart=fpsWindowFrames=fpsWindowDrops=fpsWindowLarge=fpsWindowPtsFirst=fpsWindowPtsLast=0;
             final MediaCodec prepared=codec;final int token=generation;worker=new Thread(()->decode(prepared,token),"lab-video-decoder");worker.start();
             DiagnosticLog.add(context,"H.264 解码器与视频窗口已就绪；尚未收到或显示手机视频。");
         }catch(IOException|RuntimeException e){ready=false;running=false;if(codec!=null){try{codec.release();}catch(RuntimeException ignored){}codec=null;}DiagnosticLog.add(context,"视频解码器启动失败："+e.getClass().getSimpleName());}
@@ -83,10 +84,13 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
         fpsWindowPtsLast=pts;
         if(now-fpsWindowStart>=1000000000L){
             long dropNow=dropped-fpsWindowDrops;
-            DiagnosticLog.add(context,"帧率实测：到达 "+fpsWindowFrames+" 帧/秒，丢弃 "+dropNow+"，有效画面帧(>1KB) "+fpsWindowLarge+"，PTS 跨度 "+(fpsWindowPtsLast-fpsWindowPtsFirst)/1000+" 毫秒。");
+            if(lastFpsLog==0||now-lastFpsLog>=15000000000L){
+                lastFpsLog=now;
+                DiagnosticLog.add(context,"帧率实测：到达 "+fpsWindowFrames+" 帧/秒，丢弃 "+dropNow+"，有效画面帧(>1KB) "+fpsWindowLarge+"，PTS 跨度 "+(fpsWindowPtsLast-fpsWindowPtsFirst)/1000+" 毫秒。");
+            }
             fpsWindowStart=now;fpsWindowFrames=0;fpsWindowDrops=dropped;fpsWindowLarge=0;fpsWindowPtsFirst=pts;
         }
-        if(received<=3||received%60==0)DiagnosticLog.add(context,"收到 H.264 数据帧 "+received+"，长度 "+data.length+" 字节；尚不能仅据此确认画面。");
+        if(received<=3||received%900==0)DiagnosticLog.add(context,"收到 H.264 数据帧 "+received+"，长度 "+data.length+" 字节；尚不能仅据此确认画面。");
     }
     private static boolean onlyConfig(byte[] data){
         boolean config=false;
@@ -108,7 +112,7 @@ final class VideoSink implements AutoCloseable, HiSightClient.Video {
                 }}
                 int output=decoder.dequeueOutputBuffer(info,5000);
                 if(output>=0){if((info.flags&(MediaCodec.BUFFER_FLAG_CODEC_CONFIG|MediaCodec.BUFFER_FLAG_END_OF_STREAM))==0)decoded=true;boolean show=visible&&(info.flags&(MediaCodec.BUFFER_FLAG_CODEC_CONFIG|MediaCodec.BUFFER_FLAG_END_OF_STREAM))==0;decoder.releaseOutputBuffer(output,show);
-                    if(show){rendered++;if(rendered<=3||rendered%60==0)DiagnosticLog.add(context,"解码输出已提交视频窗口："+rendered+" 帧；请以实际画面确认。");}
+                    if(show){rendered++;if(rendered<=3||rendered%900==0)DiagnosticLog.add(context,"解码输出已提交视频窗口："+rendered+" 帧；请以实际画面确认。");}
                 }else if(output==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED){MediaFormat actual=decoder.getOutputFormat();DiagnosticLog.add(context,"视频输出格式："+actual.getInteger(MediaFormat.KEY_WIDTH)+"×"+actual.getInteger(MediaFormat.KEY_HEIGHT)+"。");}
             }
         }catch(IOException|RuntimeException e){if(generation==token){ready=false;running=false;DiagnosticLog.add(context,"视频解码停止："+e.getClass().getSimpleName());}}

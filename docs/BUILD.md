@@ -47,7 +47,9 @@ bash app/build.sh
 python3 scripts/test-host.py
 ```
 
-测试依赖 JSON-java 20240303，由脚本从 Maven Central 下载并检查 SHA-256。测试使用合成向量和本机回环 TCP，不访问手机，也不验证实际 Wi-Fi、蓝牙、音视频硬件或开机行为。
+主机测试使用 `ANDROID_SDK_ROOT` 下 Android SDK Platform 35 的 `android.jar` 提供 Android API 类型。
+
+JSON-java 20240303 由脚本从 Maven Central 下载并检查 SHA-256。测试使用合成向量和本机回环 TCP，不访问手机，也不验证实际 Wi-Fi、蓝牙、音视频硬件或开机行为。
 
 ## 目录
 

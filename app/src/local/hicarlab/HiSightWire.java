@@ -91,6 +91,7 @@ final class HiSightWire implements AutoCloseable {
             if(!options){replies.add(pack(message("OPTIONS * RTSP/1.0","2","","Require","hisight1.0"),false));options=true;}
         }else if(method.equals("GET_PARAMETER")){
             Set<String> requested=new HashSet<>();for(String row:body.split("\r?\n")){String k=row.split(":",2)[0].trim();if(!k.isEmpty())requested.add(k);}
+            if(requested.contains("his_audio_codecs"))events.log("HiSight 请求音频编码能力；当前音频由 DMSDP 扬声器服务协商。");
             Map<String,String> caps=new LinkedHashMap<>();caps.put("his_version","1.0");
             caps.put("his_video_formats","codecs 1;fps 30;gop 30;bitrate 2000000;vbr-min 1000000;vbr-max 3000000;dpi "+UiScale.dpi()+";scr-w "+VideoProfile.width()+";scr-h "+VideoProfile.height()+";width "+VideoProfile.width()+";height "+VideoProfile.height());
             caps.put("his_device_type","device_type 4;subtype 0;");

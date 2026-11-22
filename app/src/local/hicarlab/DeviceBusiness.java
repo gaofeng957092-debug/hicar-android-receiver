@@ -11,6 +11,8 @@ final class DeviceBusiness implements ControlSession.Business {
     interface Display {boolean ready();void endpoint(int port)throws IOException;}
     interface Speaker {boolean ready();}
     private final Speaker speaker,microphone;private boolean speakerAnnounced,microphoneAnnounced;
+    private final boolean honorProfile;
+    private boolean speakerAnnouncedOnDedicatedRequest;
     private final Display display;
     private boolean announced;
     private final String id,model,owner,client;
@@ -20,7 +22,8 @@ final class DeviceBusiness implements ControlSession.Business {
     DeviceBusiness(String id,String model,String owner,String client,ControlSession.Events e){this(id,model,owner,client,e,null);}
     DeviceBusiness(String id,String model,String owner,String client,ControlSession.Events e,Display d){this(id,model,owner,client,e,d,null);}
     DeviceBusiness(String id,String model,String owner,String client,ControlSession.Events e,Display d,Speaker a){this(id,model,owner,client,e,d,a,null);}
-    DeviceBusiness(String id,String model,String owner,String client,ControlSession.Events e,Display d,Speaker a,Speaker m){this.id=id;this.model=model;this.owner=owner;this.client=client;events=e;display=d;speaker=a;microphone=m;}
+    DeviceBusiness(String id,String model,String owner,String client,ControlSession.Events e,Display d,Speaker a,Speaker m){this(id,model,owner,client,e,d,a,m,false);}
+    DeviceBusiness(String id,String model,String owner,String client,ControlSession.Events e,Display d,Speaker a,Speaker m,boolean honorProfile){this.id=id;this.model=model;this.owner=owner;this.client=client;events=e;display=d;speaker=a;microphone=m;this.honorProfile=honorProfile;}
     static byte[] packet(byte[] body)throws IOException{
         if(body.length>1400)throw new IOException("device reply limit");
         return NearbyWire.join(new byte[]{36,0,0,0,3,-1,-1,-1,-1,(byte)(body.length>>>8),(byte)body.length},body);
@@ -65,11 +68,13 @@ final class DeviceBusiness implements ControlSession.Business {
                     byte[] reply=packet(NearbyWire.join(NearbyWire.uint(102),service.toString().getBytes(StandardCharsets.UTF_8)));announced=true;
                     events.log("H.264 解码器和窗口就绪，已宣布 "+VideoProfile.width()+"×"+VideoProfile.height()+" 显示服务；尚未收到视频。");announcements.add(reply);
                 }
-                if((mask&4)!=0&&speaker!=null&&speaker.ready()&&!speakerAnnounced){
+                boolean dedicatedSpeakerRequest=honorProfile&&mask==4;
+                if((mask&4)!=0&&speaker!=null&&speaker.ready()&&(!speakerAnnounced||dedicatedSpeakerRequest&&!speakerAnnouncedOnDedicatedRequest)){
                     JSONObject service=new JSONObject().put("deviceId",id).put("deviceName","HiCarLab").put("serviceId","speaker1").put("serviceType",4)
                         .put("properties",new JSONObject().put("2003","48000,44100").put("2004","1").put("2005","12")).put("status",new JSONObject());
                     announcements.add(packet(NearbyWire.join(NearbyWire.uint(102),service.toString().getBytes(StandardCharsets.UTF_8))));speakerAnnounced=true;
-                    events.log("已宣布 AAC 扬声器服务；实际解码与出声待验证。");
+                    if(dedicatedSpeakerRequest)speakerAnnouncedOnDedicatedRequest=true;
+                    events.log(dedicatedSpeakerRequest?"已回复荣耀车联单独请求的 AAC 扬声器服务。":"已宣布 AAC 扬声器服务；实际解码与出声待验证。");
                 }
                 if((mask&2)!=0&&microphone!=null&&microphone.ready()&&!microphoneAnnounced){
                     JSONObject service=new JSONObject().put("deviceId",id).put("deviceName","HiCarLab").put("serviceId","mic1").put("serviceType",2)

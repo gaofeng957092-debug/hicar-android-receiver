@@ -92,7 +92,7 @@ final class LocalHotspot implements AutoCloseable {
             }
             boolean absent = address == null || address.toString().equals("02:00:00:00:00:00");
             String ssid=(String)config.getClass().getMethod("getSsid").invoke(config),password=(String)config.getClass().getMethod("getPassphrase").invoke(config);
-            events.log("[热点凭据核对] reservation读回SSID="+ssid+"，BSSID字段存在="+(address!=null)+"，密码长度="+(password==null?-1:password.length())+"。");
+            events.log("热点配置已读回；名称存在 "+(ssid!=null)+"，地址存在 "+(address!=null)+"，密码存在 "+(password!=null)+"。");
             SparseIntArray channels=(SparseIntArray)config.getClass().getMethod("getChannels").invoke(config);
             if(channels.size()!=1||channels.get(2,0)!=149){events.failed("系统未保留指定的 5 GHz 信道配置");return;}
             Set<String> added=addresses();added.removeAll(oldAddresses);
@@ -112,11 +112,11 @@ final class LocalHotspot implements AutoCloseable {
                     }
                     return;
                 }
-                String realBssid=rootBssid(owner);
+                String realBssid=scannedBssid!=null?scannedBssid:rootBssid(owner);
                 NetworkResource.Offer offer;
                 if(realBssid!=null){
                     offer=new NetworkResource.Offer(ssid,realBssid,password,owner,client,actualFrequency!=0?actualFrequency:5745,4005);
-                    events.log("已将 root 读取的真实 BSSID 填入凭据（地址值不写日志）。");
+                    events.log(scannedBssid!=null?"使用本轮热点运行回调确认的 BSSID。":"使用 root 读取的热点 BSSID。");
                 }else{
                     offer=NetworkResource.Offer.ssidOnly(ssid,password,owner,client,actualFrequency,4005);
                     events.log("系统未公开真实 BSSID，使用仅 SSID 凭据（手机按名称+密码关联）。");

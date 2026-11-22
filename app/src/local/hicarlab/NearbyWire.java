@@ -66,6 +66,7 @@ public final class NearbyWire {
     static class Negotiator {
         byte[] summary;int seen;int channel;
         Negotiator(byte[] s,int c){summary=s;channel=c;}
+        byte[] initial(){return pack(0,join(tlv(1,new byte[]{2}),tlv(3,summary),tlv(5,new byte[]{0})));}
         byte[] respond(Frame frame)throws IOException {
             if((frame.flags&1)!=0)throw new Invalid("encrypted before authentication");
             ByteArrayOutputStream o=new ByteArrayOutputStream();int next=seen;

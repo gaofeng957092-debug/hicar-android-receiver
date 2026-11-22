@@ -49,6 +49,15 @@ public final class AudioTest {
         d.receive(3,0xffffffffL,NearbyWire.join(NearbyWire.uint(101),b("{\"deviceId\":\"peer\"}")));
         byte[] announce=d.receive(3,0xffffffffL,NearbyWire.join(NearbyWire.uint(104),new byte[]{0,0,3,63})).get(0);NearbyWire.Cursor cursor=new NearbyWire.Cursor(announce,11);check(cursor.uint()==102);
         JSONObject service=AuthBusiness.object(new String(announce,cursor.p,announce.length-cursor.p,StandardCharsets.UTF_8));check(service.getInt("serviceType")==4&&service.getString("serviceId").equals("speaker1"));
+        byte[] identity=NearbyWire.join(NearbyWire.uint(101),b("{\"deviceId\":\"peer\"}"));
+        byte[] combined=NearbyWire.join(NearbyWire.uint(104),new byte[]{0,0,0,13});
+        byte[] speakerOnly=NearbyWire.join(NearbyWire.uint(104),new byte[]{0,0,0,4});
+        DeviceBusiness honor=new DeviceBusiness("own","00048000","192.168.49.1","192.168.49.2",logs::add,null,()->true,null,true);
+        honor.receive(3,0xffffffffL,identity);
+        check(honor.receive(3,0xffffffffL,combined).size()==1);
+        check(Arrays.equals(honor.receive(3,0xffffffffL,speakerOnly).get(0),announce));
+        check(honor.receive(3,0xffffffffL,speakerOnly).isEmpty());
+        check(d.receive(3,0xffffffffL,speakerOnly).isEmpty());
         // Actual UDP loopback: reject a wrong source and malformed record, then reorder/decrypt AAC.
         CountDownLatch done=new CountDownLatch(3);AtomicInteger count=new AtomicInteger();AtomicBoolean sinkClosed=new AtomicBoolean(),active=new AtomicBoolean(true);
         AudioReceiver.Sink sink=new AudioReceiver.Sink(){public boolean ready(){return true;}public void reset(){}public void offer(AudioMedia.Frame f){check(f.rate==48000&&f.channels==2&&f.data.length==4);count.incrementAndGet();done.countDown();}public void close(){sinkClosed.set(true);}};

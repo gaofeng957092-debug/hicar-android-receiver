@@ -65,6 +65,7 @@ final class ReceiverEngine {
         final java.util.concurrent.atomic.AtomicBoolean mediaBusy=new java.util.concurrent.atomic.AtomicBoolean();
         TestSession(String model,boolean video){this.model=model;this.video=video;}
         volatile boolean authenticated;
+        volatile long lastInboundMedia=System.nanoTime();
         NetworkResource network;
         private String peer;
         private byte[] key;
@@ -220,6 +221,7 @@ final class ReceiverEngine {
     }
     private void protocolReceive(BluetoothSocket socket, int token, String model, int channel, boolean control, TestSession session) {
         AuthBusiness auth = null;
+        String controlStep = "读取帧";
         try {
             byte[] buffer = new byte[4096]; InputStream in = socket.getInputStream(); OutputStream out = socket.getOutputStream();
             NearbyWire.Decoder decoder = new NearbyWire.Decoder();
@@ -232,21 +234,33 @@ final class ReceiverEngine {
                 int n = in.read(buffer); if (n < 0) break;
                 if (control) {
                     for (NearbyWire.Frame frame : decoder.feed(buffer, n)) {
+                        controlStep = "帧类型 " + frame.kind + "，标志 " + frame.flags + "，载荷长度 " + frame.payload.length;
                         byte[] reply;
                         if (frame.kind == 4 || frame.kind == 33) {
-                            if (!session.authenticated) throw new IOException("network before authentication");
+                            if (!session.authenticated) throw new NearbyWire.Invalid("network before authentication");
                             if (session.network != null) { replyNetwork(frame, session.network, out); reply = null; }
                             else { inspectNetworkRequest(frame); reply = null; }
                         } else reply = negotiation.respond(frame);
                         if (reply != null) { out.write(reply); out.flush(); }
                         if (generation.get() == token) log("FE35 控制帧：类型 " + frame.kind + "，载荷 " + frame.payload.length + " 字节，响应 " + (reply == null ? 0 : reply.length) + " 字节。");
+                        controlStep = "读取帧";
                     }
                 } else {
                     if (!auth.done()) auth.feed(buffer, n, out);
-                    else if (generation.get() == token) log("FE36 认证后收到 " + n + " 字节；未记录内容，等待后续实现。");
+                    else if (generation.get() == token) log("FE36 认证后状态：" + AuthBusiness.postAuthMetadata(buffer,n) + "。");
                 }
             }
-        } catch (Exception e) { if (generation.get() == token) log((control ? "FE35 协商" : "FE36 认证") + " 结束：" + e.getClass().getSimpleName() + "；未确认成功时请勿视为已连接。"); }
+        } catch (Exception e) {
+            if (generation.get() == token) {
+                if (control) {
+                    // Only protocol errors created from fixed messages may include details.
+                    String reason = e instanceof NearbyWire.Invalid ? e.getMessage() : e.getClass().getSimpleName();
+                    log("FE35 协商结束：" + controlStep + "；原因 " + reason + "。");
+                } else {
+                    log("FE36 认证结束：" + e.getClass().getSimpleName() + "。");
+                }
+            }
+        }
         finally {
             if (auth != null) auth.close(); if (!control) authBusy.set(false);
             if(!control && !session.authenticated && generation.get()==token)status.issue(token,"连接验证未完成，请在手机重试，或点重新连接。");
@@ -281,7 +295,10 @@ final class ReceiverEngine {
             byte[] reply = resource.respond(frame);
             if (reply != null) { out.write(reply); out.flush(); }
             for (byte[] pending : resource.takePending()) { out.write(pending); out.flush(); }
-            log("网络协商：类型 " + frame.kind + "，响应 " + (reply == null ? 0 : reply.length) + " 字节；角色已协商 " + resource.negotiated + "，临时凭据已发送 " + resource.credentialsSent + "。");
+            StringJoiner tags=new StringJoiner(",");
+            if((frame.flags&1)==0)for(NearbyWire.Field field:NearbyWire.fields(frame.payload))tags.add(Integer.toString(field.tag));
+            log("网络协商：类型 " + frame.kind + "，字段 " + tags + "，响应 " + (reply == null ? 0 : reply.length) + " 字节；角色已协商 " + resource.negotiated + "，临时凭据已发送 " + resource.credentialsSent + "。");
+            if(frame.kind==4&&resource.negotiationIssue!=null)log("网络能力未匹配：" + resource.negotiationIssue + "。");
         }
     }
     private void startTcpListeners(TestSession session, int token, String model) throws IOException {
@@ -321,10 +338,11 @@ final class ReceiverEngine {
             NearbyWire.Negotiator negotiator = new NearbyWire.Negotiator(localId.getBytes(StandardCharsets.US_ASCII), -1);
             DmsdpWire.Decoder dmsdp = new DmsdpWire.Decoder();
             long lastPeer=System.nanoTime(),lastHeartbeat=lastPeer;
+            boolean networkHandshakeStarted=false;
             if(kind==2){
                 byte[] key=session.copyKey();if(key==null)throw new IOException("missing authenticated key");
                 if(session.video){AudioSink sink=null;try{
-                    sink=new AudioSink(context);audioReceiver=new AudioReceiver(session.network.offer.ownerIp(),session.network.offer.clientIp(),key,sink,new AudioReceiver.Events(){public boolean active(){return generation.get()==token;}public void log(String text){if(active())ReceiverEngine.this.log(text);}});audioReceivers.add(audioReceiver);
+                    sink=new AudioSink(context);audioReceiver=new AudioReceiver(session.network.offer.ownerIp(),session.network.offer.clientIp(),key,sink,new AudioReceiver.Events(){public boolean active(){return generation.get()==token;}public void log(String text){if(active())ReceiverEngine.this.log(text);}public void mediaReceived(){session.lastInboundMedia=System.nanoTime();}});audioReceivers.add(audioReceiver);
                 }catch(IOException|RuntimeException e){if(sink!=null)sink.close();log("本轮音频后端未就绪："+e.getClass().getSimpleName()+"；继续画面与触控。");}}
                 if(session.video&&microphoneAllowed&&MicrophoneSender.enabled(context))try{
                     microphone=new MicrophoneSender(context,session.network.offer.ownerIp(),session.network.offer.clientIp(),key,new MicrophoneSender.Events(){public boolean active(){return generation.get()==token;}public void log(String text){if(active())ReceiverEngine.this.log(text);}});microphones.add(microphone);
@@ -338,22 +356,33 @@ final class ReceiverEngine {
                 try{controlSession=new ControlSession(key,controlEvents,new DeviceBusiness(localId,session.model,session.network.offer.ownerIp(),session.network.offer.clientIp(),this::log,new DeviceBusiness.Display(){
                     public boolean ready(){return session.video&&((LabApplication)context).video().ready()&&generation.get()==token;}
                     public void endpoint(int port)throws IOException{startHiSight(session,token,port);}
-                },selectedAudio,selectedMicrophone),audioControl);}finally{Arrays.fill(key,(byte)0);}
+                },selectedAudio,selectedMicrophone,session.network.honorProfile),audioControl);}finally{Arrays.fill(key,(byte)0);}
                 output.write(controlSession.initial());output.flush();log("DMSDP OPTIONS 首包已发送，使用本轮认证密钥协商 AES-CTR；未发送媒体能力。");
             }
             while (generation.get() == token) {
                 if(kind==2&&controlSession.negotiated()&&System.nanoTime()-lastHeartbeat>1000000000L){output.write(controlSession.heartbeat());output.flush();lastHeartbeat=System.nanoTime();}
                 int n;
                 try{n=input.read(buffer);}catch(java.net.SocketTimeoutException e){
+                    if(kind==0&&session.network.honorProfile&&!networkHandshakeStarted){
+                        networkHandshakeStarted=true;
+                        output.write(negotiator.initial());output.flush();
+                        log("荣耀会话：在空闲的 TCP 控制连接发起 CCMP 协商。");
+                    }
                     if(kind==2){long now=System.nanoTime();
                         // 投屏进行中(视频会话活跃)时，控制连接上手机本就不发数据，
                         // 不能用"空闲超时"误判断线；存活由视频会话与真实 socket 错误判定。
                         if(!session.mediaBusy.get()&&now-lastPeer>30000000000L)throw e;
+                        if(session.network.honorProfile&&controlSession.peerHeartbeatSeen()
+                                &&ReconnectGate.peerTimedOut(now,lastPeer,session.lastInboundMedia)){
+                            log("荣耀车联的控制心跳和音视频都已中断，准备自动重连。");
+                            throw e;
+                        }
                         if(controlSession.negotiated()&&now-lastHeartbeat>1000000000L){output.write(controlSession.heartbeat());output.flush();lastHeartbeat=now;}
                     }
                     continue;
                 }
                 if (n < 0) break; lastPeer=System.nanoTime();
+                if(kind==0)networkHandshakeStarted=true;
                 if (kind == 0) for (NearbyWire.Frame frame : decoder.feed(buffer, n)) {
                     if (frame.kind == 4 || frame.kind == 33) replyNetwork(frame, session.network, output);
                     else { byte[] reply = negotiator.respond(frame); if (reply != null) { output.write(reply); output.flush(); } }
@@ -377,6 +406,7 @@ final class ReceiverEngine {
             public void log(String text){if(active())ReceiverEngine.this.log(text);}
             public void add(java.net.Socket s){tcpClients.add(s);}
             public void remove(java.net.Socket s){tcpClients.remove(s);}
+            public void mediaReceived(){session.lastInboundMedia=System.nanoTime();}
         },((LabApplication)context).input());}finally{Arrays.fill(key,(byte)0);}
         videoClients.add(client);new Thread(()->{try{client.run(port);}finally{videoClients.remove(client);session.mediaBusy.set(false);requestReconnect(token,session.model);}},"lab-hisight-control").start();
     }
